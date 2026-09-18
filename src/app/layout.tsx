@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-ink-950 font-sans text-slate-100 antialiased">
+      <body className="min-h-screen overflow-x-clip bg-ink-950 font-sans text-slate-100 antialiased">
         <PWARegister />
         {children}
       </body>
