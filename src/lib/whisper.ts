@@ -23,6 +23,22 @@ const MODEL_IDS: Record<ModelSize, string> = {
   base: 'onnx-community/whisper-base', // ~80MB
 };
 
+/**
+ * Pinned ONNX Runtime Web engine build.
+ *
+ * transformers.js 3.x, by default, serves the WASM engine from its own
+ * CDN dist/ folder — and recent releases ship a **dev build** of
+ * onnxruntime-web there, containing an int64→Number (BigInt) defect that
+ * breaks Whisper on mobile browsers ("Cannot convert a BigInt value to a
+ * number"). Pointing wasmPaths at the stable 1.20.1 release guarantees a
+ * consistent (JS glue + wasm binary) pair. A backup CDN covers flaky
+ * mobile networks.
+ */
+const ORT_WASM_CDN = [
+  'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/',
+  'https://unpkg.com/onnxruntime-web@1.20.1/dist/',
+];
+
 export function whisperLoadedSize(): ModelSize | null {
   return bundle?.size ?? null;
 }
@@ -49,13 +65,22 @@ export function loadWhisper(
     const cb = (e: any) => {
       if (e?.status === 'progress' && onProgress) onProgress({ file: e.file ?? 'model', progress: e.progress ?? 0 });
     };
-    const processor = await tf.AutoProcessor.from_pretrained(id, cb);
-    const model = await tf.AutoModelForSpeechSeq2Seq.from_pretrained(id, {
-      dtype: 'q8',
-      progress_callback: cb,
-    });
-    bundle = { model, processor, size };
-    return bundle;
+    let lastErr: unknown = null;
+    for (const wasmPaths of ORT_WASM_CDN) {
+      try {
+        tf.env.backends.onnx.wasm.wasmPaths = wasmPaths;
+        const processor = await tf.AutoProcessor.from_pretrained(id, cb);
+        const model = await tf.AutoModelForSpeechSeq2Seq.from_pretrained(id, {
+          dtype: 'q8',
+          progress_callback: cb,
+        });
+        bundle = { model, processor, size };
+        return bundle;
+      } catch (err) {
+        lastErr = err; // try next CDN
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   })();
   inflight = { size, p };
   p.catch(() => {

@@ -125,12 +125,22 @@ tahqiq/
 
 ---
 
+## 📱 تطبيق الجوال (PWA) + التجاوب
+
+- **قابل للتركيب:** `manifest.webmanifest` + أيقونات (192/512/maskable + apple-touch-icon) → من متصفح الجوال: قائمة ⋮ ← **"إضافة إلى الشاشة الرئيسية"**، فيفتح كتطبيق مستقل (display: standalone) بخلفية داكنة وشعاره الخاص.
+- **يُعمل دون إنترنت (بعد أول زيارة):** Service Worker (`public/sw.js`) يخزّن واجهة التطبيق وبيانات المصحف المحلية (`/quran.json`)، مع استراتيجية network-first للـ API و cache-first للموارد الثابتة. نموذج Whisper يبقى معتمدًا على الشبكة (تُخزَّنه المتصفحات ذاتيًا عبر Cache API).
+- **متجاوب كليًا:** الترويسة قابلة للطي على الشاشات الضيقة، شريط السور قابل للتمرير، جدول النتائج بتمرير أفقي — مُختبَر على عرض 360px فأعلى.
+
+---
+
 ## ℹ ملاحظات تقنية
 
 - **الاعتماديات:** Next.js 15 (App Router) · React 19 · Tailwind CSS 3 · Zustand 5 · @huggingface/transformers 3 (ONNX Runtime Web).
 - `@huggingface/transformers` يُحمَّل كـ **lazy chunk** (≈0.5MB) فقط عند أول طلب نموذج — صفحة التحميل الأولى 120KB فقط.
+- **تثبيت محرّك ONNX Runtime Web:** إصدارات transformers.js 3.x تخدم ملفات WASM من حزمة CDN الخاصة بها (وبعضها تبني -dev معيبة بخلل int64/BigInt يُسقط Whisper على متصفحات الجوال — "Cannot convert a BigInt value to a number"). لذلك يُثبَّت `wasmPaths` صراحةً على الإصدار المستقر `onnxruntime-web@1.20.1` (مع CDN احتياطي)، ويُثبَّت npm override على الإصدار نفسه لتوحيد الحزمة JS/WASM.
 - ملفات WASM الخاصة بـ ONNX Runtime Web تُنزَّل من CDN عند التشغيل (تتطلب شبكة مرة واحدة)، وإلّا يُفعَّل الاحتياطي تلقائيًا.
 - الخطوط: Amiri (نص المصحف) + Space Grotesk (العلامة) عبر Google Fonts مع بدائل نظام.
+- توليد أيقونات التطبيق: `npm run icons` (SVG → PNG عبر sharp).
 
 ---
 

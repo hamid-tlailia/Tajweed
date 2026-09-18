@@ -57,7 +57,7 @@ export default function SurahBrowser() {
             <button
               key={s.id}
               onClick={() => selectSurah(s.id)}
-              className={`flex min-w-[94px] shrink-0 flex-col items-center gap-1.5 rounded-xl border px-2.5 py-2.5 transition ${
+              className={`flex min-w-[84px] shrink-0 flex-col items-center gap-1.5 rounded-xl border px-2 py-2.5 transition sm:min-w-[94px] sm:px-2.5 ${
                 sel
                   ? 'border-gold-500/70 bg-gold-500/10 shadow-[0_0_16px_rgba(212,175,55,0.15)]'
                   : 'border-line bg-ink-850/60 hover:border-gold-600/40 hover:bg-ink-800'

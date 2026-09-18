@@ -58,7 +58,7 @@ export default function ModelPanel() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className={`font-brand text-[13px] font-semibold ${sel ? 'text-gold-200' : 'text-slate-200'}`}>
+                <span className={`font-brand text-[11px] font-semibold sm:text-[13px] ${sel ? 'text-gold-200' : 'text-slate-200'}`}>
                   {sz.label}
                 </span>
                 <span className="font-brand text-[10px] text-slate-400">{sz.size}</span>

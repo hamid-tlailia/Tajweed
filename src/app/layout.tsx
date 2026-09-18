@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import PWARegister from '@/components/PWARegister';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -19,6 +20,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html dir="rtl" lang="ar">
       <head>
         <link rel="icon" href={FAVICON} />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="تحقيق" />
+        <meta name="theme-color" content="#070B10" />
+        <meta name="description" content="محرّك التحقق من التلاوة القرآنية على الجهاز — Whisper WASM/ONNX مع التراصف القسري" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
@@ -26,7 +34,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-ink-950 font-sans text-slate-100 antialiased">{children}</body>
+      <body className="min-h-screen bg-ink-950 font-sans text-slate-100 antialiased">
+        <PWARegister />
+        {children}
+      </body>
     </html>
   );
 }
