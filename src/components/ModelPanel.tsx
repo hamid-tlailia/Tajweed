@@ -71,7 +71,7 @@ export default function ModelPanel() {
 
       {/* τ slider */}
       <div className="mt-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <label htmlFor="tau" className="text-xs text-slate-300">
             معيار المطابقة <span className="font-brand text-gold-300">τ (Match Threshold)</span>
           </label>
@@ -101,12 +101,12 @@ export default function ModelPanel() {
 
       {/* backend + load */}
       <div className="mt-5 rounded-xl border border-line bg-ink-850/70 p-3.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-slate-400">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="min-w-0 text-[11px] text-slate-400">
             المُشغِّل: <b className="font-brand text-slate-200">ONNX Runtime Web · WASM</b>
           </span>
-          <span className="flex items-center gap-1.5 whitespace-nowrap text-[11px] text-slate-300">
-            <span className={`h-2 w-2 rounded-full ${statusDot}`} />
+          <span className="flex items-center gap-1.5 text-[11px] text-slate-300">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} />
             {statusText}
           </span>
         </div>

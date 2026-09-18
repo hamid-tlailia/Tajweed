@@ -76,9 +76,9 @@ export default function SurahBrowser() {
       </div>
 
       {data && (
-        <div className="mt-4 grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
           {/* surah summary + scope */}
-          <div className="rounded-xl border border-line bg-ink-850/50 p-4">
+          <div className="min-w-0 rounded-xl border border-line bg-ink-850/50 p-4">
             <div className="flex items-center gap-3">
               <Medallion n={data.id} size="md" active />
               <div>
@@ -115,7 +115,7 @@ export default function SurahBrowser() {
           </div>
 
           {/* ayahs list */}
-          <div className="max-h-[300px] space-y-1 overflow-y-auto rounded-xl border border-line bg-ink-850/50 p-2.5">
+          <div className="max-h-[300px] min-w-0 space-y-1 overflow-y-auto rounded-xl border border-line bg-ink-850/50 p-2.5">
             {data.ayahs.map((a) => {
               const sel = scope === 'ayah' && a.numberInSurah === selectedAyah;
               return (

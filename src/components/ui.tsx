@@ -17,7 +17,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`rounded-2xl border border-line/80 bg-ink-900/70 shadow-[0_0_30px_rgba(0,0,0,0.35)] backdrop-blur-sm ${className}`}>
+    <section className={`min-w-0 rounded-2xl border border-line/80 bg-ink-900/70 shadow-[0_0_30px_rgba(0,0,0,0.35)] backdrop-blur-sm ${className}`}>
       <header className="flex items-center justify-between gap-3 border-b border-line/60 px-5 py-3.5">
         <div>
           <h2 className="font-quran text-lg leading-none text-gold-200">{title}</h2>

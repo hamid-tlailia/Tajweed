@@ -29,12 +29,14 @@ export default function Home() {
         ) : (
           <>
             <SurahBrowser />
-            <div className="mt-5 grid gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
-              <div className="space-y-5 xl:sticky xl:top-[86px] xl:self-start">
+            <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
+              <div className="min-w-0 space-y-5 xl:sticky xl:top-[86px] xl:self-start">
                 <ModelPanel />
                 <RecorderPanel />
               </div>
-              <AlignmentConsole />
+              <div className="min-w-0">
+                <AlignmentConsole />
+              </div>
             </div>
           </>
         )}
