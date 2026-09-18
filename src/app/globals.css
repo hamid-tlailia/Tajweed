@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background:
+    radial-gradient(1200px 500px at 85% -10%, rgba(212, 175, 55, 0.09), transparent 60%),
+    radial-gradient(900px 420px at 10% -10%, rgba(16, 185, 129, 0.06), transparent 60%),
+    #070b10;
+  background-attachment: fixed;
+}
+
+/* ---------- scrollbars ---------- */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: #0b1017;
+}
+*::-webkit-scrollbar-thumb {
+  background: #24304a;
+  border-radius: 8px;
+  border: 2px solid #0b1017;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #31415f;
+}
+
+/* ---------- animations ---------- */
+@keyframes pulseRing {
+  0% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 18px rgba(244, 63, 94, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0);
+  }
+}
+.recording-ring {
+  animation: pulseRing 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-up {
+  animation: fadeUp 0.45s ease both;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(90deg, rgba(212, 175, 55, 0.08) 25%, rgba(212, 175, 55, 0.28) 50%, rgba(212, 175, 55, 0.08) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+}
+
+/* ---------- range slider (τ) ---------- */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #d4af37, #10b981);
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #f5e9c9;
+  border: 3px solid #d4af37;
+  box-shadow: 0 0 12px rgba(212, 175, 55, 0.6);
+  cursor: pointer;
+}
+input[type='range']::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #f5e9c9;
+  border: 3px solid #d4af37;
+  cursor: pointer;
+}
+
+@layer components {
+  .btn-secondary {
+    @apply flex items-center justify-center gap-2 rounded-lg border border-line bg-ink-800/80 px-3 py-2.5 text-xs font-medium text-slate-200 transition hover:border-gold-600/50 hover:bg-ink-750;
+  }
+}
