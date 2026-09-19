@@ -1,28 +1,35 @@
-// TAHQĪQ — tajweed rule engine (text/tashkeel-based)
+// TAHQĪQ — tajweed rule engine (text/tashkeel-based, Uthmani-aware)
+//
+// Handles the Uthmani orthography special marks used by AlQuran Cloud:
+//   U+06E1 small-high sukun (final sukun) · U+08F0 charatīn (tanwīn fath)
+//   U+06E4 small-high yāʾ w/ hamza (virtual hamza on the preceding letter)
+//   U+0670 karakhan (final madd alef) · U+06D6-06EF small high letters
 //
 // Detects, per word (with next-word context):
-//   مد: طبيعي · واجب متصل · واجب منفصل · تعويضي
-//   غنّة: مَدِّية · إخفاء · إدغام (بغُنّة/بلا غُنّة) · إظهار
-//   قَلْقَلَة · لاَم شمسيّة/قَمَريّة
-// and builds the *expected duration* per word from syllables + rule bonuses,
-// which classifyWord() compares against the measured duration via τ.
+//   مد: طبيعي · واجب متصل · واجب منفصل · تعويضي  (a word may carry two)
+//   غنّة: مدّية · إخفاء (15) · إدغام لغوي بغُنّة/بلا غُنّة · شفويّ · إظهار
+//   قَلْقَلَة (at rest only) · لاَم شمسيّة/قَمَريّة
+// and builds the *expected duration* per word for τ-based timing.
 
 import type { WordStatus, WordTajweed } from './types';
 import { clamp } from './util';
 
-const HARAQA_RE = /[\u064B-\u0652\u0653-\u065F\u0670\u06D6-\u06ED\u0640]/;
-const HARAKAT_RE = /[\u064B-\u0652\u0653-\u065F\u0670\u06D6-\u06ED]/g;
+const HARAKA_CLASSES =
+  '\\u064B-\\u0652\\u0653-\\u065F\\u0670\\u06D6-\\u06EF' +
+  '\\u0883-\\u0885\\u0898-\\u089F\\u08A6\\u08AA-\\u08AF\\u08B2-\\u08B8' +
+  '\\u08BA\\u08D3-\\u08D8\\u08E2-\\u08E5\\u08F0-\\u08FE';
+const HARAQA_RE = new RegExp('[' + HARAKA_CLASSES + '\\u0640]');
+const HARAKAT_RE = new RegExp('[' + HARAKA_CLASSES + '\\u0640]', 'g');
 
-/** Strip all diacritics / decorative marks */
+/** Strip all diacritics / decorative marks (Uthmani-aware) */
 export function stripTashkeel(s: string): string {
-  return s.replace(HARAKAT_RE, '').replace(/\u0640/g, '');
+  return s.replace(HARAKAT_RE, '');
 }
 
 /** Normalize Arabic for comparison / tokenization (no diacritics, unified alef/ya/ta-marbuta) */
 export function normalizeArabic(s: string): string {
   return s
     .replace(HARAKAT_RE, '')
-    .replace(/\u0640/g, '')
     .replace(/[أإآٱ]/g, 'ا')
     .replace(/ى/g, 'ي')
     .replace(/ؤ/g, 'و')
@@ -37,23 +44,9 @@ export function normalizeArabic(s: string): string {
 
 interface Tok {
   ch: string; // base letter
-  h: string; // primary haraka: fatha/kasra/damma/sukun/tanween/karakhan (may be '')
-  sh: boolean; // shadda (gemination → the letter is at rest)
-}
-
-/** Split a tashkeeled word into base-letter tokens with their haraka + shadda */
-function tokenize(word: string): Tok[] {
-  const out: Tok[] = [];
-  for (const c of word) {
-    if (c >= '\u0600' && c <= '\u06FF' && !HARAQA_RE.test(c)) {
-      out.push({ ch: c, h: '', sh: false });
-    } else if (out.length && c === SHADDA) {
-      out[out.length - 1].sh = true;
-    } else if (HARAQA_RE.test(c) && out.length) {
-      if (!out[out.length - 1].h) out[out.length - 1].h = c;
-    }
-  }
-  return out;
+  h: string; // primary haraka (fatha/kasra/damma/sukun/tanween/karakhan), '' if none
+  sh: boolean; // shadda (gemination)
+  hz: boolean; // U+06E4 — the letter carries a hamza (virtual hamza carrier)
 }
 
 const FATHA = '\u064E';
@@ -65,18 +58,44 @@ const TANM = '\u064C';
 const TANH = '\u064D';
 const SHADDA = '\u0651';
 const KARAKHAN = '\u0670';
+const SMALL_SUKUN = '\u06E1';
+const CHARATIN = '\u08F0';
+const SMALL_HAMZA_YA = '\u06E4';
 
 const SHORT = new Set([FATHA, KASRA, DAMMA]);
 const MADD_LETTERS = new Set(['ا', '\u0671', 'و', 'ي', 'ى']);
-const HAMZA_CARRIERS = new Set(['أ', 'إ', 'ء', '\u0624', '\u0626']); // alef/waw/yaa carrying hamza
+const HAMZA_CARRIERS = new Set(['أ', 'إ', 'ء', '\u0624', '\u0626']);
 const QALQALA = new Set(['ق', 'ط', 'ب', 'ج', 'د']);
 // nūn-sukūn rule sets (mutually exclusive, ordered by precedence)
-const IZHAAR = new Set(['ا', 'ء', 'ه', 'ع', 'ح', 'غ', 'خ']); // 6/7 — no ghunna
-const IGHFA = new Set(['ت', 'ث', 'ج', 'د', 'ذ', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ف', 'ق', 'ك']); // 15 — ghunna
-const IDGHAM = new Set(['ي', 'ر', 'م', 'ل', 'ن']); // 5 — م ن with ghunna, ي ر ل without
+const IZHAAR = new Set(['ا', 'ء', 'ه', 'ع', 'ح', 'غ', 'خ']); // no ghunna
+const IGHFA = new Set(['ت', 'ث', 'ج', 'د', 'ذ', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ف', 'ق', 'ك']); // ghunna
+const IDGHAM = new Set(['ي', 'ر', 'م', 'ل', 'ن']); // م ن with ghunna · ي ر ل without
 const IDGHAM_GHUNNA = new Set(['م', 'ن']);
-const IDGHAM_SHAFAWI = new Set(['ب', 'م', 'ل', 'ن', 'ي', 'ر']); // final mīm → no ghunna
+const IDGHAM_SHAFAWI = new Set(['ب', 'م', 'ل', 'ن', 'ي', 'ر']); // final mīm
 const SHAMSIYYA = new Set(['ت', 'ث', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ل', 'ن']);
+
+/** Split a tashkeeled (Uthmani) word into base-letter tokens with marks */
+function tokenize(word: string): Tok[] {
+  const out: Tok[] = [];
+  const last = () => out[out.length - 1];
+  for (const c of word) {
+    if (c >= '\u0600' && c <= '\u06D5' && !HARAQA_RE.test(c)) {
+      // normalize uthmani yāʾ (U+06CC) → ي for rule-set membership
+      out.push({ ch: c === '\u06CC' ? 'ي' : c, h: '', sh: false, hz: false });
+    } else if (out.length && c === SHADDA) {
+      last().sh = true;
+    } else if (out.length && c === SMALL_SUKUN) {
+      if (!last().h) last().h = SUKUN; // uthmani small final sukun
+    } else if (out.length && c === CHARATIN) {
+      if (!last().h) last().h = TANF; // uthmani variant tanween fath
+    } else if (out.length && c === SMALL_HAMZA_YA) {
+      last().hz = true; // virtual hamza on the preceding letter
+    } else if (out.length && HARAQA_RE.test(c)) {
+      if (!last().h) last().h = c;
+    }
+  }
+  return out;
+}
 
 export interface RuleBadge {
   label: string;
@@ -84,7 +103,9 @@ export interface RuleBadge {
 }
 
 function firstBaseLetter(word: string): string {
-  for (const c of word) if (!HARAQA_RE.test(c)) return c;
+  for (const c of word) {
+    if (!HARAQA_RE.test(c)) return c === '\u06CC' ? 'ي' : c;
+  }
   return '';
 }
 function firstHamzaCarrier(word: string): boolean {
@@ -99,14 +120,21 @@ function firstHarakaIsFatha(word: string): boolean {
   return false;
 }
 
+const TANWEE = new Set([TANF, TANM, TANH]);
+
 /** Does the word END with a madd (sustained long vowel)? */
 function wordEndsWithMadd(toks: Tok[]): boolean {
-  const last = toks[toks.length - 1];
+  const lastTok = toks[toks.length - 1];
   const prev = toks[toks.length - 2];
-  if (!last) return false;
-  if (last.h === KARAKHAN) return true; // uthmani final madd alef: كِتَٰبِ
-  if (MADD_LETTERS.has(last.ch) && SHORT.has(last.h)) return true; // دَعَايَ (kasra+ya)
-  if (last.ch === 'ا' && prev && SHORT.has(prev.h)) return true; // fatha+alef at end
+  if (!lastTok) return false;
+  if (lastTok.h === KARAKHAN) return true; // uthmani final madd alef: كِتَٰبِ
+  if (MADD_LETTERS.has(lastTok.ch) && SHORT.has(lastTok.h)) return true; // explicit: ـُو / ـِ
+  if (!prev) return false;
+  // a short vowel on the letter BEFORE a final madd/hamza letter: the long vowel
+  // is spelled across two letters — دُعَاۤءِیۤ (اِ + یۤ), قَالُوا (و + ا), لَاۤ (لَ + اۤ), لِي
+  if (SHORT.has(prev.h) && (MADD_LETTERS.has(lastTok.ch) || HAMZA_CARRIERS.has(lastTok.ch) || lastTok.hz)) return true;
+  // final alef after a shadda letter (إِلَّا) — but NOT after tanween (the alef of عَدًّا is not a madd)
+  if (lastTok.ch === 'ا' && prev.sh && !TANWEE.has(prev.h)) return true;
   return false;
 }
 
@@ -122,72 +150,53 @@ export function analyzeWords(words: string[]): WordTajweed[] {
 export function analyzeWord(raw: string, nextWord = ''): WordTajweed {
   const word = raw;
   const toks = tokenize(word);
+  const lastTok = toks[toks.length - 1];
 
   const rules: RuleBadge[] = [];
 
   // ---- syllables ≈ short-vowel marks + final sukun ----
   const syllables =
-    (word.match(/[\u064E\u064F\u0650\u064B\u064C\u064D]/g) ?? []).length + (/\u0652$/.test(word) ? 1 : 0);
+    (word.match(/[\u064E\u064F\u0650\u064B\u064C\u064D\u06E1]/g) ?? []).length + (/\u0652$/.test(word) ? 1 : 0);
 
-  // ================= مَدُود =================
-  let maddMs = 0;
-  let maddType: string | null = null;
-  let isMadd = false;
+  // ================= مَدُود (a word may carry two: muttasil + munfasil) =================
+  const isHamzaCarrier = (t: Tok) => HAMZA_CARRIERS.has(t.ch) || t.hz;
 
-  // مَدّ وَاجِب مُتَّصِل: a short vowel + hamza-carrying alef inside one word
-  //   قَالَ (fatha+alef-hamza) · فَإِن (fatha+alef-hamza below) · ...
-  let wajibMuttasil = false;
-  for (let k = 1; k < toks.length; k++) {
-    if (SHORT.has(toks[k - 1].h) && HAMZA_CARRIERS.has(toks[k].ch)) {
-      wajibMuttasil = true;
-      break;
-    }
-  }
-
-  // مَدّ وَاجِب مُنْفَصِل: word ends with a madd + next word starts with hamza
-  const wajibMunfasil = !wajibMuttasil && wordEndsWithMadd(toks) && firstHamzaCarrier(nextWord);
-
-  // مَدّ تَعْويضي: word ends in an explicit sukun + next word starts with fatha
-  const lastTok = toks[toks.length - 1];
+  const endsMadd = wordEndsWithMadd(toks);
+  const nextWordHamza = firstHamzaCarrier(nextWord);
+  // واجب متصل: short vowel + hamza carrier INSIDE the word (not the final madd letter)
+  // — قَالَ، سَأَلَ، ٱلۡحَاۤقَّةُ، دُعَاۤءِـ
+  const wajibMuttasil = toks.some(
+    (t, k) => k > 0 && k < toks.length - 1 && SHORT.has(toks[k - 1].h) && isHamzaCarrier(t),
+  );
+  // final madd letter bearing a virtual hamza mark (وَمَاۤ / ـِیۤ):
+  //  • next word starts with a hamza → the mark is the elided join → منفصل
+  //  • otherwise the hamza belongs inside the word → متصل
+  const endHamzaMadd = endsMadd && !!lastTok && lastTok.hz;
+  // واجب منفصل: word ends with a madd + next word starts with a hamza — وَمَاۤ أَدۡرَىٰكَ
+  const wajibMunfasil = endsMadd && nextWordHamza;
+  // تعويضي: explicit final sukun + next word starts with fatha
+  // (not when the final mīm merges — إدغام شفويّ consumes the sukun)
   const maddTawaadi =
-    !wajibMuttasil &&
-    !wajibMunfasil &&
-    !!lastTok &&
-    lastTok.h === SUKUN &&
+    !!lastTok && lastTok.h === SUKUN &&
+    (lastTok.ch !== 'م' || !IDGHAM_SHAFAWI.has(firstBaseLetter(nextWord))) &&
     firstHarakaIsFatha(nextWord);
-
-  // مَدّ طَبِيعِي: madd letter after a short vowel, madda, or karakhan
+  // طبيعي: madd letter after a short vowel, madda (آ), or karakhan (مَٰ / ـِٰ)
   const naturalMadd =
-    !wajibMuttasil &&
-    !wajibMunfasil &&
-    !maddTawaadi &&
-    (word.includes(KARAKHAN) ||
-      word.includes('\u0622') ||
-      (() => {
-        for (let k = 1; k < toks.length; k++) {
-          if (SHORT.has(toks[k - 1].h) && MADD_LETTERS.has(toks[k].ch) && !HAMZA_CARRIERS.has(toks[k].ch)) return true;
-        }
-        return false;
-      })());
+    word.includes(KARAKHAN) ||
+    word.includes('\u0622') ||
+    toks.some((t, k) => k > 0 && SHORT.has(toks[k - 1].h) && MADD_LETTERS.has(t.ch));
 
-  if (wajibMuttasil) {
-    isMadd = true;
-    maddType = 'مَدٌّ وَاجِبٌ مُتَّصِل';
-    maddMs = 650;
-  } else if (wajibMunfasil) {
-    isMadd = true;
-    maddType = 'مَدٌّ وَاجِبٌ مُنْفَصِل';
-    maddMs = 650;
-  } else if (maddTawaadi) {
-    isMadd = true;
-    maddType = 'مَدٌّ تَعْويضي';
-    maddMs = 650;
-  } else if (naturalMadd) {
-    isMadd = true;
-    maddType = 'مَدٌّ طَبِيعِي';
-    maddMs = 350;
-  }
-  if (maddType) rules.push({ label: maddType, tone: 'gold' });
+  const madds: { label: string; ms: number }[] = [];
+  if (wajibMuttasil) madds.push({ label: 'مَدٌّ وَاجِبٌ مُتَّصِل', ms: 650 });
+  if (wajibMunfasil) madds.push({ label: 'مَدٌّ وَاجِبٌ مُنْفَصِل', ms: 650 });
+  else if (endHamzaMadd && !wajibMuttasil) madds.push({ label: 'مَدٌّ وَاجِبٌ مُتَّصِل', ms: 650 });
+  if (maddTawaadi) madds.push({ label: 'مَدٌّ تَعْويضي', ms: 650 });
+  if (!madds.length && naturalMadd) madds.push({ label: 'مَدٌّ طَبِيعِي', ms: 350 });
+
+  let isMadd = madds.length > 0;
+  let maddType: string | null = isMadd ? madds[0].label : null;
+  let maddMs = isMadd ? Math.min(1100, madds.reduce((a, m) => a + m.ms, 0)) : 0;
+  for (const m of madds) rules.push({ label: m.label, tone: 'gold' });
 
   // ================= غُنَن =================
   let ghunnaMs = 0;
@@ -197,10 +206,11 @@ export function analyzeWord(raw: string, nextWord = ''): WordTajweed {
   // غُنّة مَدِّية: nūn/mīm with shadda
   const ghunnaMadd = word.includes('\u0645\u0651') || word.includes('\u0646\u0651');
 
-  // nūn/mīm at rest (explicit sukun, shadda, tanween, or implicit final sukun)
+  // nūn/mīm at rest (explicit/implicit sukun, small sukun, shadda, or tanween)
   const nooNAtRest =
     !!lastTok && (lastTok.ch === 'ن' || lastTok.ch === 'م') &&
-    (lastTok.h === SUKUN || lastTok.h === TANF || lastTok.h === TANM || lastTok.h === TANH || lastTok.h === '' || lastTok.sh);
+    (lastTok.h === SUKUN || lastTok.h === TANF || lastTok.h === TANM || lastTok.h === TANH ||
+      lastTok.h === '' || lastTok.sh);
 
   if (ghunnaMadd) {
     isGhunna = true;
@@ -243,24 +253,37 @@ export function analyzeWord(raw: string, nextWord = ''): WordTajweed {
   if (ghunnaType) rules.push({ label: ghunnaType, tone: 'mint' });
 
   // ================= قَلْقَلَة =================
-  // qalqala letter at rest: shadda (geminated) anywhere, or final sukun/tanween
+  // qalqala fires only at actual REST:
+  //  • final letter with sukun/tanween (reciter may pause there), or
+  //  • a geminated (shadda) qalqala letter at the END of the word
+  //    (e.g. عَدًّا / مَسْجِدًا — pause lands on the doubled letter).
+  // Mid-word sukun/shadda (بِسْمِ، ٱلۡحَاۤقَّةُ) are passing rests — NO qalqala.
   let qalqala = false;
-  for (const t of toks) {
+  for (let idx = 0; idx < toks.length; idx++) {
+    const t = toks[idx];
     if (!QALQALA.has(t.ch)) continue;
-    if (t.sh || t.h === SUKUN) {
+    if (idx === toks.length - 1 && (t.h === SUKUN || t.h === TANF || t.h === TANM || t.h === TANH || t.h === '')) {
       qalqala = true;
       break;
     }
-    if (t === lastTok && (t.h === TANF || t.h === TANM || t.h === TANH || t.h === '')) {
-      qalqala = true;
-      break;
+    if (t.sh) {
+      const rest = toks.slice(idx + 1);
+      if (rest.length === 0) {
+        qalqala = true;
+        break;
+      }
+      // geminate + tanween + final alef: ـًّ ا (عَدًّا)
+      if (rest.length === 1 && rest[0].ch === 'ا' && (t.h === TANF || t.h === TANM || t.h === TANH)) {
+        qalqala = true;
+        break;
+      }
     }
   }
   if (qalqala) rules.push({ label: 'قَلْقَلَة', tone: 'gold' });
 
   // ================= لاَم (article) =================
   // decided by the following letter (the phonological rule)
-  if (toks.length >= 3 && toks[0].ch === 'ا' && toks[1].ch === 'ل') {
+  if (toks.length >= 3 && (toks[0].ch === 'ا' || toks[0].ch === '\u0671') && toks[1].ch === 'ل') {
     const fol = toks[2].ch;
     if (SHAMSIYYA.has(fol)) rules.push({ label: 'لاَم شمسيّة', tone: 'slate' });
     else rules.push({ label: 'لاَم قَمَريّة', tone: 'slate' });

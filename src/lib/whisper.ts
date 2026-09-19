@@ -125,25 +125,46 @@ export async function whisperTranscribeChunked(
   let text = '';
   const chunks: TsChunk[] = [];
   let failures = 0;
+
+  /**
+   * generate() with timestamps first (richer output); if that code path
+   * throws (e.g. int64/BigInt defects in some wasm builds), retry once
+   * with the plain, proven path so the transcript is never lost.
+   */
+  async function generateChunk(inputs: any): Promise<{ text: string; chunks: any[] }> {
+    const base: Record<string, unknown> = {
+      language: 'ar',
+      task: 'transcribe',
+      do_sample: false,
+      max_new_tokens: 384,
+      condition_on_previous_text: false,
+    };
+    try {
+      const out: any = await b.model.generate(inputs, { ...base, return_timestamps: true });
+      const rawChunks: any[] = Array.isArray(out?.chunks) ? out.chunks : [];
+      const t = String(out?.text ?? rawChunks.map((c) => String(c?.text ?? '')).join(' ')).trim();
+      return { text: t, chunks: rawChunks };
+    } catch (e) {
+      console.warn('[TAHQIQQ] generate(return_timestamps) failed → plain retry:', (e as Error)?.message ?? e);
+      const plain: any = await b.model.generate(inputs, base);
+      if (typeof plain === 'string') return { text: plain.trim(), chunks: [] };
+      // generate() may return a batch array, a single tensor, or a wrapper object
+      const p0 = Array.isArray(plain) ? plain[0] : plain?.sequence ?? plain;
+      const ids = Array.from(p0?.data ?? p0 ?? []);
+      if (!ids.length) return { text: '', chunks: [] };
+      const t = await b.processor.tokenizer.decode(ids, { skip_special_tokens: true });
+      return { text: String(t ?? '').trim(), chunks: [] };
+    }
+  }
+
   for (let i = 0; i < total; i++) {
     const seg = samples.subarray(i * chunk, Math.min(samples.length, (i + 1) * chunk));
     if (i > 0 && seg.length < sr * 0.5) break;
     onChunk?.(i, total);
     try {
       const inputs = await toWhisperInputs(b, seg);
-      const out: any = await b.model.generate(inputs, {
-        language: 'ar',
-        task: 'transcribe',
-        do_sample: false,
-        max_new_tokens: 384,
-        condition_on_previous_text: false,
-        return_timestamps: true,
-      });
+      const { text: t, chunks: rawChunks } = await generateChunk(inputs);
       const offsetMs = i * 28 * 1000;
-      const rawChunks: any[] = Array.isArray(out?.chunks) ? out.chunks : [];
-      const chunkTexts = rawChunks.map((c) => String(c?.text ?? '').trim()).filter(Boolean);
-      const t =
-        typeof out === 'string' ? out : (String(out?.text ?? chunkTexts.join(' ')).trim());
       if (t) text = text ? `${text} ${t}` : t;
       for (const c of rawChunks) {
         const ct = String(c?.text ?? '').trim();
