@@ -29,8 +29,10 @@ interface TahqiqStore {
   stage: string;
   result: AlignmentResult | null;
   activeWord: number;
+  alertOn: boolean;
 
   init: () => Promise<void>;
+  setAlertOn: (b: boolean) => void;
   selectSurah: (id: number) => void;
   selectAyah: (n: number) => void;
   setScope: (s: 'ayah' | 'surah') => void;
@@ -64,6 +66,9 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   stage: '',
   result: null,
   activeWord: -1,
+  alertOn: true,
+
+  setAlertOn: (alertOn) => set({ alertOn }),
 
   init: async () => {
     if (get().surahsStatus === 'ready') return;

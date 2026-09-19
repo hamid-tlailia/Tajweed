@@ -10,9 +10,48 @@ const MAX_ROWS = 500;
 
 const ENGINE_LABEL: Record<string, string> = {
   'whisper-attn': 'Whisper + Cross-Attention',
+  'whisper-ts': 'Whisper + التوقيت الزمني',
   'whisper-energy': 'Whisper + Energy-DTW',
   'offline-dtw': 'Energy-DTW (احتياطي)',
 };
+
+/* ---------- violation alert (vibration + beep) ---------- */
+
+let alertCtx: AudioContext | null = null;
+function ensureAlertAudio(): AudioContext | null {
+  try {
+    if (!alertCtx) {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return null;
+      alertCtx = new AC();
+    }
+    if (alertCtx.state === 'suspended') void alertCtx.resume();
+    return alertCtx;
+  } catch {
+    return null;
+  }
+}
+function beep(freq: number, ms = 90, gainV = 0.05) {
+  const ctx = ensureAlertAudio();
+  if (!ctx) return;
+  try {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq;
+    g.gain.value = gainV;
+    o.connect(g).connect(ctx.destination);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + ms / 1000);
+    o.stop(ctx.currentTime + ms / 1000 + 0.02);
+  } catch {
+    /* noop */
+  }
+}
+function fireAlert(status: string) {
+  if (!navigator.vibrate) return;
+  navigator.vibrate(status === 'silent' ? [70, 50, 70] : [45, 35, 45]);
+}
 
 export default function AlignmentConsole() {
   const result = useTahqiq((s) => s.result);
@@ -20,6 +59,8 @@ export default function AlignmentConsole() {
   const stage = useTahqiq((s) => s.stage);
   const activeWord = useTahqiq((s) => s.activeWord);
   const setActiveWord = useTahqiq((s) => s.setActiveWord);
+  const alertOn = useTahqiq((s) => s.alertOn);
+  const setAlertOn = useTahqiq((s) => s.setAlertOn);
 
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -109,6 +150,12 @@ export default function AlignmentConsole() {
     if (idx !== lastIdxRef.current) {
       lastIdxRef.current = idx;
       setActiveWord(idx);
+      // violation alert: vibrate + beep when the playhead lands on a flawed word
+      const w = idx >= 0 ? result.words[idx] : null;
+      if (w && alertOn && (w.status === 'short' || w.status === 'long' || w.status === 'silent')) {
+        fireAlert(w.status);
+        beep(w.status === 'silent' ? 392 : 880);
+      }
     }
     if (t >= durationMs && durationMs > 0) {
       setPlaying(false);
@@ -198,6 +245,16 @@ export default function AlignmentConsole() {
             {activeWord >= 0 ? `كلمة ${Math.min(activeWord + 1, result.words.length)}/${result.words.length}` : `${result.words.length} كلمة`}
           </div>
         </div>
+        <button
+          onClick={() => setAlertOn(!alertOn)}
+          title={alertOn ? 'التنبيه بالاهتزاز والصوت عند المخالفة: مفعّل — اضغط للإيقاف' : 'التنبيه بالاهتزاز والصوت عند المخالفة: متوقف — اضغط للتفعيل'}
+          aria-label="تنبيه المخالفات"
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm transition ${
+            alertOn ? 'border-gold-500/60 bg-gold-500/15 text-gold-300' : 'border-line bg-ink-900/60 text-slate-600'
+          }`}
+        >
+          📳
+        </button>
       </div>
 
       {/* summary stats */}
@@ -292,10 +349,19 @@ export default function AlignmentConsole() {
                   <StatusBadge status={w.status} />
                 </td>
                 <td className="px-3 py-2">
-                  <span className="flex flex-wrap gap-1">
-                    {w.tajweed.maddType ? <Badge tone="gold">{w.tajweed.maddType}</Badge> : null}
-                    {w.tajweed.ghunnaType ? <Badge tone="mint">{w.tajweed.ghunnaType}</Badge> : null}
-                    {!w.tajweed.maddType && !w.tajweed.ghunnaType ? <span className="text-slate-600">—</span> : null}
+                  <span className="flex flex-wrap items-center gap-1">
+                    {w.tajweed.rules.length ? (
+                      w.tajweed.rules.slice(0, 3).map((r, k) => (
+                        <Badge key={k} tone={r.tone}>
+                          {r.label}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                    {w.tajweed.rules.length > 3 ? (
+                      <span className="text-[9px] text-slate-600">+{w.tajweed.rules.length - 3}</span>
+                    ) : null}
                   </span>
                 </td>
               </tr>

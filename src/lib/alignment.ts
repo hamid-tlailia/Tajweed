@@ -7,7 +7,7 @@
 
 import { energyEnvelope } from './audio';
 import { targetTextOf } from './quran';
-import { analyzeWord, classifyWord, normalizeArabic, tajweedScore, verdictFor } from './tajweed';
+import { analyzeWords, classifyWord, normalizeArabic, tajweedScore, verdictFor } from './tajweed';
 import type {
   AlignmentResult,
   EngineId,
@@ -18,7 +18,7 @@ import type {
   WordTajweed,
 } from './types';
 import { clamp, mean } from './util';
-import { loadWhisper, whisperForcedAlignment, whisperTranscribeChunked } from './whisper';
+import { loadWhisper, whisperForcedAlignment, whisperTranscribeChunked, type TsChunk } from './whisper';
 
 export interface AlignInput {
   samples: Float32Array;
@@ -46,7 +46,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const samples = input.samples;
   const durationMs = (samples.length / sr) * 1000;
   const words = opts.target.words;
-  const tjs: WordTajweed[] = words.map((w) => analyzeWord(w.word));
+  const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word));
 
   hooks.stage('معالجة العيّنة الصوتية (16kHz · أحادي)…');
   const energy = energyEnvelope(samples, 40);
@@ -65,17 +65,19 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       );
       hooks.model?.({ status: 'ready', progress: 1 });
 
-      hooks.stage('التفكيك الصوتي (Whisper generate)…');
-      transcript = await whisperTranscribeChunked(b, samples, 4, (i, total) =>
+      hooks.stage('التفكيك الصوتي (Whisper · عربي)…');
+      const tsOut = await whisperTranscribeChunked(b, samples, 4, (i, total) =>
         hooks.stage(
           total > 1 ? `التفكيك الصوتي — المقطع ${i + 1} من ${total}…` : 'التفكيك الصوتي (Whisper)…',
         ),
       );
+      transcript = tsOut.text;
       const targetNorm = targetTextOf(opts.target);
       const [match, pred] = similarity(transcript, targetNorm);
       transcriptMatch = match;
       predWords = pred;
 
+      // 1) best precision: teacher-forced cross-attention matrix
       if (words.length <= ATTN_MAX_WORDS && durationMs / 1000 <= ATTN_MAX_SEC) {
         hooks.stage('التراصف القسري: التفكيك المدرَّس + مصفوفة الانتباه المتقاطع…');
         const fa = await whisperForcedAlignment(b, samples, words.map((w) => w.word));
@@ -83,6 +85,12 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
           engine = 'whisper-attn';
           perWord = attentionToWords(fa, tjs, energy, durationMs);
         }
+      }
+      // 2) robust path: Whisper's own timestamp tokens matched to the target words
+      if (!perWord && tsOut.chunks.length) {
+        hooks.stage('التراصف بزمنيات Whisper (طريق بديل)…');
+        perWord = timestampsToWords(tsOut.chunks, transcript, tjs);
+        if (perWord) engine = 'whisper-ts';
       }
       if (!perWord) engine = 'whisper-energy';
     } catch (e: any) {
@@ -110,6 +118,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     const status = classifyWord(measured, tjs[i].expectedMs, opts.tau);
     let conf = perWord[i].conf;
     if (engine === 'whisper-attn') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
+    else if (engine === 'whisper-ts') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
     else if (engine === 'whisper-energy') conf = clamp(0.55 * conf + 0.45 * transcriptMatch, 0.05, 0.99);
     return {
       index: i,
@@ -345,6 +354,96 @@ function attentionToWords(
     const mid = pv > 0 ? 0.65 * mid0 + 0.35 * midE : mid0;
     return { midMs: mid, conf: clamp(0.65 * conf0 + 0.35 * (pv > 0 ? 0.55 : 0.25), 0.05, 0.98) };
   });
+}
+
+/**
+ * Robust timing path: match transcript words (from Whisper timestamp chunks)
+ * to target words via LCS and take per-word midpoints from the chunk timings.
+ * Returns null when the transcript is too far from the target (<20% match).
+ */
+function timestampsToWords(
+  chunks: TsChunk[],
+  _transcript: string,
+  tjs: WordTajweed[],
+): { midMs: number; conf: number }[] | null {
+  // 1) flatten chunks into timed words (even split inside multi-word chunks)
+  const timed: { w: string; mid: number; conf: number }[] = [];
+  for (const c of chunks) {
+    const ws = c.text.split(/\s+/).filter(Boolean);
+    if (!ws.length) continue;
+    const dur = Math.max(80, c.endMs - c.startMs);
+    ws.forEach((w, k) => {
+      const start = c.startMs + (k / ws.length) * dur;
+      timed.push({ w: normalizeArabic(w), mid: start + dur / ws.length / 2, conf: 0.85 });
+    });
+  }
+  if (!timed.length) return null;
+
+  const target = tjs.map((t) => normalizeArabic(t.word));
+  const pairs = lcsPairs(timed.map((t) => t.w), target);
+  if (!pairs.length) return null;
+  if (pairs.length / target.length < 0.2) return null;
+
+  const matchAt = new Map<number, number>(); // target idx → timed idx
+  for (const [ti, pi] of pairs) matchAt.set(ti, pi);
+
+  // 2) per-target-word midpoint: matched → chunk midpoint; unmatched → interpolate
+  const mids: number[] = [];
+  const confs: number[] = [];
+  for (let i = 0; i < target.length; i++) {
+    const pi = matchAt.get(i);
+    if (pi != null) {
+      mids.push(timed[pi].mid);
+      confs.push(timed[pi].conf);
+    } else {
+      let prevI = i - 1;
+      while (prevI >= 0 && !matchAt.has(prevI)) prevI--;
+      let nextI = i + 1;
+      while (nextI < target.length && !matchAt.has(nextI)) nextI++;
+      if (prevI >= 0 && nextI < target.length) {
+        const a = timed[matchAt.get(prevI)!].mid;
+        const b = timed[matchAt.get(nextI)!].mid;
+        const f = (i - prevI) / (nextI - prevI);
+        mids.push(a + (b - a) * f);
+        confs.push(0.4);
+      } else if (nextI < target.length) {
+        mids.push(timed[matchAt.get(nextI)!].mid - (nextI - i) * 260);
+        confs.push(0.4);
+      } else if (prevI >= 0) {
+        mids.push(timed[matchAt.get(prevI)!].mid + (i - prevI) * 260);
+        confs.push(0.4);
+      } else {
+        mids.push((i / Math.max(1, target.length)) * 2000);
+        confs.push(0.25);
+      }
+    }
+  }
+  return mids.map((m, i) => ({ midMs: m, conf: confs[i] }));
+}
+
+/** LCS returning matched index pairs [targetIdx, predIdx] (order preserved) */
+function lcsPairs(p: string[], t: string[]): [number, number][] {
+  const n = p.length;
+  const m = t.length;
+  if (!n || !m || n * m > 4_000_000) return [];
+  const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = p[i] === t[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const pairs: [number, number][] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (p[i] === t[j]) {
+      pairs.push([j, i]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else j++;
+  }
+  return pairs;
 }
 
 /**

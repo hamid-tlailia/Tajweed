@@ -7,7 +7,7 @@
  *   cross-origin (fonts, HF CDN models) → untouched (browser HTTP cache +
  *     transformers.js Cache API handle the Whisper model cache)
  */
-const VERSION = 'tahqiq-v1.1.0';
+const VERSION = 'tahqiq-v1.2.0';
 const STATIC_CACHE = `${VERSION}-static`;
 const DATA_CACHE = `${VERSION}-data`;
 

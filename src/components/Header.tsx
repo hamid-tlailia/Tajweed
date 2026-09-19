@@ -32,13 +32,13 @@ export default function Header() {
       : modelStatus === 'loading'
         ? { dot: 'bg-warn-400 animate-pulse', text: `جارٍ التحميل ${Math.round(modelProgress * 100)}%`, cls: 'text-warn-300' }
         : modelStatus === 'error'
-          ? { dot: 'bg-danger-400 animate-pulse', text: 'تعذّر التحميل — المحرّك الاحتياطي فعّال', cls: 'text-danger-300' }
+          ? { dot: 'bg-danger-400 animate-pulse', text: 'تعذّر Whisper — المحرّك الاحتياطي يعمل', cls: 'text-danger-300' }
           : { dot: 'bg-slate-500', text: 'الخمول — النموذج غير محمَّل بعد', cls: 'text-slate-400' };
 
   return (
     <header className="sticky top-0 z-40 border-b border-line/70 bg-ink-950/90 backdrop-blur-md">
       <div className="mx-auto max-w-[1500px] px-3 py-2.5 sm:px-5 sm:py-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
           {/* logo + title */}
           <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <LogoMark />
@@ -54,8 +54,8 @@ export default function Header() {
           </div>
 
           {/* engine status + quick stats */}
-          <div className="ms-auto flex min-w-0 items-center gap-2.5 sm:gap-3">
-            <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-full border border-line bg-ink-900/80 px-3 py-1.5 sm:px-4 sm:py-2">
+          <div className="flex min-w-0 items-center gap-2.5 sm:ms-auto sm:gap-3">
+            <div className="flex min-w-0 items-center gap-2.5 rounded-full border border-line bg-ink-900/80 px-3 py-1.5 sm:px-4 sm:py-2">
               <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${status.dot}`} />
               <div className="min-w-0 leading-tight">
                 <div className="font-brand text-[9px] tracking-[0.18em] text-slate-300 sm:text-[10px] sm:tracking-[0.22em]">

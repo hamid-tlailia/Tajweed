@@ -95,29 +95,71 @@ async function toWhisperInputs(b: WhisperBundle, samples: Float32Array): Promise
   return b.processor(samples, { return_tensor: true, sampling_rate: 16000 });
 }
 
-/** Free transcription, processed in ≤28s chunks (Whisper context window) */
+export interface TsChunk {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface TsTranscript {
+  text: string;
+  chunks: TsChunk[]; // word-level timestamp chunks (Whisper timestamp tokens)
+}
+
+/**
+ * Free Arabic transcription, processed in ≤28s chunks (Whisper context
+ * window). Forces `language: 'ar'` (without it, Whisper auto-detects and
+ * hallucinates English on short recitation samples). `return_timestamps`
+ * gives word-level timings usable as a fallback alignment path. One failing
+ * chunk no longer kills the whole transcription.
+ */
 export async function whisperTranscribeChunked(
   b: WhisperBundle,
   samples: Float32Array,
   maxChunks = 4,
   onChunk?: (i: number, total: number) => void,
-): Promise<string> {
+): Promise<TsTranscript> {
   const sr = 16000;
   const chunk = Math.floor(28 * sr);
   const total = Math.max(1, Math.min(maxChunks, Math.ceil(samples.length / chunk)));
-  const parts: string[] = [];
+  let text = '';
+  const chunks: TsChunk[] = [];
+  let failures = 0;
   for (let i = 0; i < total; i++) {
     const seg = samples.subarray(i * chunk, Math.min(samples.length, (i + 1) * chunk));
     if (i > 0 && seg.length < sr * 0.5) break;
     onChunk?.(i, total);
-    const inputs = await toWhisperInputs(b, seg);
-    const out: any = await b.model.generate(inputs, { max_new_tokens: 384, do_sample: false });
-    const ids = Array.from(out[0]?.data ?? out[0]);
-    const t = await b.processor.tokenizer.decode(ids, { skip_special_tokens: true });
-    const clean = String(t ?? '').trim();
-    if (clean) parts.push(clean);
+    try {
+      const inputs = await toWhisperInputs(b, seg);
+      const out: any = await b.model.generate(inputs, {
+        language: 'ar',
+        task: 'transcribe',
+        do_sample: false,
+        max_new_tokens: 384,
+        condition_on_previous_text: false,
+        return_timestamps: true,
+      });
+      const offsetMs = i * 28 * 1000;
+      const rawChunks: any[] = Array.isArray(out?.chunks) ? out.chunks : [];
+      const chunkTexts = rawChunks.map((c) => String(c?.text ?? '').trim()).filter(Boolean);
+      const t =
+        typeof out === 'string' ? out : (String(out?.text ?? chunkTexts.join(' ')).trim());
+      if (t) text = text ? `${text} ${t}` : t;
+      for (const c of rawChunks) {
+        const ct = String(c?.text ?? '').trim();
+        if (!ct) continue;
+        const ts: any = c?.timestamp;
+        const st = Number(ts?.[0] ?? 0) * 1000 + offsetMs;
+        const enRaw = ts?.[1];
+        const en = enRaw == null ? st + 400 : Number(enRaw) * 1000 + offsetMs;
+        chunks.push({ text: ct, startMs: st, endMs: Math.max(st + 60, en) });
+      }
+    } catch (e) {
+      failures++;
+      if (failures >= total) throw e; // all chunks failed → let the caller fall back
+    }
   }
-  return parts.join(' ');
+  return { text, chunks };
 }
 
 export interface ForcedAlignmentOut {

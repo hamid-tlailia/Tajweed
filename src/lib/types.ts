@@ -1,7 +1,7 @@
 // TAHQĪQ — shared domain types
 
 export type ModelSize = 'tiny' | 'base';
-export type EngineId = 'whisper-attn' | 'whisper-energy' | 'offline-dtw';
+export type EngineId = 'whisper-attn' | 'whisper-ts' | 'whisper-energy' | 'offline-dtw';
 export type ModelStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface SurahMeta {
@@ -29,9 +29,10 @@ export interface WordTajweed {
   word: string;
   syllables: number;
   isMadd: boolean;
-  maddType: string | null; // 'مَدٌّ طَبِيعِي' | 'مَدٌّ لَازِم'
+  maddType: string | null; // 'مَدٌّ طَبِيعِي' | 'مَدٌّ وَاجِبٌ مُتَّصِل' | 'مَدٌّ وَاجِبٌ مُنْفَصِل' | 'مَدٌّ تَعْويضي'
   isGhunna: boolean;
-  ghunnaType: string | null; // 'غُنّة مَدِّية' | 'غُنّة خَفِيّة'
+  ghunnaType: string | null; // 'غُنّة مَدِّية' | 'غُنّة إخفاء' | 'غُنّة إدغام' | 'غُنّة خَفِيّة'
+  rules: { label: string; tone: 'gold' | 'mint' | 'slate' }[]; // all detected rules (display)
   expectedMs: number; // model expected duration for tajweed timing
 }
 

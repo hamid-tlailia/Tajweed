@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { runAlignment } from '@/lib/alignment';
 import { Recorder, decodeBlobTo16k, makeDemoSamples } from '@/lib/audio';
 import { buildTarget } from '@/lib/quran';
-import { analyzeWord } from '@/lib/tajweed';
+import { analyzeWords } from '@/lib/tajweed';
 import type { ModelEvent } from '@/lib/types';
 import { fmtTime } from '@/lib/util';
 import { useTahqiq } from '@/store';
@@ -202,7 +202,7 @@ export default function RecorderPanel() {
   function onDemo() {
     if (!data || processing) return;
     const target = buildTarget(data, scope, selectedAyah);
-    const tjs = target.words.map((w) => analyzeWord(w.word));
+    const tjs = analyzeWords(target.words.map((w) => w.word));
     const samples = makeDemoSamples(tjs);
     void runAnalysis({ samples, url: null, demo: true });
   }

@@ -33,7 +33,7 @@ export default function ModelPanel() {
       : modelStatus === 'loading'
         ? `جارٍ التحميل ${Math.round(modelProgress * 100)}%`
         : modelStatus === 'error'
-          ? 'تعذّر — المحرّك الاحتياطي يعمل'
+          ? 'تعذّر مسار Whisper — المحرّك الاحتياطي يعمل'
           : 'لم يُحمَّل بعد';
 
   return (
@@ -139,7 +139,7 @@ export default function ModelPanel() {
             نسخ احتياطية
           </Badge>
           <p className="text-[10px] leading-relaxed text-slate-500">
-            التسلسل: <b className="font-brand text-slate-400">Whisper+انتباه متقاطع ← Whisper+طرائقي ← Energy-DTW</b>. عند أي
+            التسلسل: <b className="font-brand text-slate-400">Whisper+انتباه متقاطع ← Whisper+زمنيات ← Energy-DTW</b>. عند أي
             عطل في WASM/ONNX (بلا شبكة، صلاحيات، موارد) ينقل المحرّك التحليل تلقائيًا إلى المستوى التالي دون انقطاع.
           </p>
         </div>
