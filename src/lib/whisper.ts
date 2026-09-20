@@ -24,6 +24,25 @@ const MODEL_IDS: Record<ModelSize, string> = {
 };
 
 /**
+ * تحويل بيانات النموذج إلى أرقام عادية — إصلاح خلل BigInt.
+ *
+ * بعض نُسخ ONNX Runtime تُرجع معرفات الرموز (token ids) من نوع int64 فتظهر في
+ * جافاسكربت على هيئة BigInt، وأي عملية حسابية تخلط BigInt بعددٍ عادي ترمي
+ * «Cannot convert a BigInt value to a number» — وهو ما كان يُسقط التحليل على
+ * بعض هواتف الجوّال. هنا تُطبَّع كل الأعداد إلى Number قبل استخدامها.
+ */
+export function toNumberArray(x: unknown): number[] {
+  if (x == null) return [];
+  const arr: unknown[] = Array.isArray(x) ? x : Array.from(x as ArrayLike<unknown>);
+  const out = new Array<number>(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i] as unknown;
+    out[i] = typeof v === 'bigint' ? Number(v) : Number(v);
+  }
+  return out;
+}
+
+/**
  * Pinned ONNX Runtime Web engine build.
  *
  * transformers.js 3.x, by default, serves the WASM engine from its own
@@ -62,6 +81,7 @@ export function loadWhisper(
       /* noop */
     }
     const id = MODEL_IDS[size];
+    // ملاحظة: تُقرأ كل مخرجات النموذج عبر toNumberArray، فلا يصل BigInt إلى أي حساب.
     const cb = (e: any) => {
       if (e?.status === 'progress' && onProgress) onProgress({ file: e.file ?? 'model', progress: e.progress ?? 0 });
     };
@@ -153,7 +173,7 @@ export async function whisperTranscribeChunked(
       if (typeof plain === 'string') return { text: plain.trim(), chunks: [] };
       // generate() may return a batch array, a single tensor, or a wrapper object
       const p0 = Array.isArray(plain) ? plain[0] : plain?.sequence ?? plain;
-      const ids = Array.from(p0?.data ?? p0 ?? []);
+      const ids = toNumberArray(p0?.data ?? p0 ?? []);
       if (!ids.length) return { text: '', chunks: [] };
       const t = await b.processor.tokenizer.decode(ids, { skip_special_tokens: true });
       return { text: String(t ?? '').trim(), chunks: [] };
@@ -214,7 +234,7 @@ export async function whisperForcedAlignment(
   } catch {
     return null;
   }
-  const ids: number[] = Array.from(encTok?.input_ids?.data ?? encTok?.input_ids ?? []);
+  const ids: number[] = toNumberArray(encTok?.input_ids?.data ?? encTok?.input_ids ?? []);
   if (!ids.length) return null;
 
   const decoderIds = new Int32Array([SOT_ID, ...ids]);
@@ -268,7 +288,7 @@ async function buildSpans(processor: any, words: string[], totalTokens: number):
     let n = 1;
     try {
       const e = await processor.tokenizer(words[i], { return_tensor: true, padding: false });
-      n = Math.max(1, e?.input_ids?.data?.length ?? e?.input_ids?.length ?? 1);
+      n = Math.max(1, toNumberArray(e?.input_ids?.data ?? e?.input_ids ?? []).length);
     } catch {
       n = 1;
     }
@@ -305,7 +325,12 @@ function extractCrossRows(x: any, tDec: number): Float32Array[] | null {
     }
     if (typeof node !== 'object') return;
     const dims = node.dims;
-    const data = node.data;
+    const rawData = node.data;
+    // أحيانًا تُرجع الطبقة بيانات int64 (BigInt) — تُحوَّل قبل أي حساب
+    const data =
+      rawData && typeof BigInt64Array !== 'undefined' && rawData instanceof BigInt64Array
+        ? Float64Array.from(rawData, (v) => Number(v))
+        : rawData;
     if (Array.isArray(dims) && data) {
       const d = dims as number[];
       if (d.length >= 2 && d[d.length - 2] === tDec && d[d.length - 1] > 0) {
