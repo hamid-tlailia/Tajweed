@@ -10,6 +10,16 @@ html {
   scroll-behavior: smooth;
 }
 
+/* ---------- الخطوط: محلية بالكامل ----------
+   لا تُحمَّل أي خطوط من الإنترنت (لا Google Fonts ولا غيرها)، بل يُستعمل ما في
+   جهاز المستخدم من خطوط المصحف (كفهد، أميري قرآن، شهرزاد) وخطوط النظام العربية،
+   مع بدائل مرتبة في tailwind.config.ts — وبذلك لا يخرج أي طلب شبكي عند فتح
+   التطبيق، ويعمل بخطوطه كاملةً دون إنترنت. */
+.font-quran {
+  font-feature-settings: 'liga' 1, 'calt' 1;
+  text-rendering: optimizeLegibility;
+}
+
 body {
   background:
     radial-gradient(1200px 500px at 85% -10%, rgba(212, 175, 55, 0.09), transparent 60%),

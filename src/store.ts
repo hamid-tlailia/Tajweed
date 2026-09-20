@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { fetchSurah, fetchSurahs } from '@/lib/quran';
-import type { AlignmentResult, ModelSize, ModelStatus, SurahData, SurahMeta } from '@/lib/types';
+import type { AlignmentResult, ModelSize, ModelStatus, Riwayah, SurahData, SurahMeta } from '@/lib/types';
 import { loadWhisper } from '@/lib/whisper';
 
 const surahCache = new Map<number, SurahData>();
@@ -16,6 +16,7 @@ interface TahqiqStore {
   surahStatus: 'idle' | 'loading' | 'ready' | 'error';
   selectedAyah: number;
   scope: 'ayah' | 'surah';
+  riwayah: Riwayah;
 
   modelSize: ModelSize;
   tau: number;
@@ -36,6 +37,7 @@ interface TahqiqStore {
   selectSurah: (id: number) => void;
   selectAyah: (n: number) => void;
   setScope: (s: 'ayah' | 'surah') => void;
+  setRiwayah: (r: Riwayah) => void;
   setModelSize: (s: ModelSize) => void;
   setTau: (t: number) => void;
   loadModel: () => Promise<void>;
@@ -53,6 +55,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   surahStatus: 'idle',
   selectedAyah: 1,
   scope: 'ayah',
+  riwayah: 'hafs',
 
   modelSize: 'tiny',
   tau: 0.8,
@@ -103,6 +106,8 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
 
   selectAyah: (n) => set({ selectedAyah: n }),
   setScope: (scope) => set({ scope }),
+  // تغيير الرواية يُبطِل نتيجةً حُلِّلت بغيرها من الأصول
+  setRiwayah: (riwayah) => set({ riwayah, result: null, activeWord: -1 }),
   setModelSize: (modelSize) => set({ modelSize, modelStatus: 'idle', modelProgress: 0, modelMessage: null }),
   setTau: (tau) => set({ tau }),
 

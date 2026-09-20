@@ -13,6 +13,7 @@ import type {
   EngineId,
   ModelEvent,
   ModelSize,
+  Riwayah,
   TargetSpec,
   WordAlignment,
   WordTajweed,
@@ -31,6 +32,7 @@ export interface AlignOpts {
   tau: number;
   modelSize: ModelSize;
   target: TargetSpec;
+  riwayah: Riwayah;
 }
 
 export interface AlignHooks {
@@ -46,7 +48,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const samples = input.samples;
   const durationMs = (samples.length / sr) * 1000;
   const words = opts.target.words;
-  const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word));
+  const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word), opts.riwayah);
 
   hooks.stage('تهيئة الصوت المسجَّل…');
   const energy = energyEnvelope(samples, 40);
@@ -101,7 +103,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   }
 
   if (!perWord) {
-    hooks.stage('التحليل الصوتي البديل لمطابقة الكلمات…');
+    hooks.stage('قياس الصوت لمطابقة الكلمات…');
     perWord = energyForcedAlignment(tjs, energy, durationMs);
   }
 

@@ -33,13 +33,13 @@ export default function ModelPanel() {
       : modelStatus === 'loading'
         ? `يُنزَّل… ${Math.round(modelProgress * 100)}%`
         : modelStatus === 'error'
-          ? 'تعذّر — سيعمل التحليل البديل'
+          ? 'تعذّر — سيُقيَّم صوتيًّا'
           : 'لم يُنزَّل بعد';
 
   return (
     <Panel
       title="إعدادات التقييم"
-      subtitle="اختر دقة التعرّف على الصوت ومدى صرامة الحكم على نطقك"
+      subtitle="اختر دقة السماع ومدى صرامة الحكم على نطقك"
     >
       {/* دقة النموذج */}
       <div className="grid grid-cols-2 gap-2.5">
@@ -98,10 +98,10 @@ export default function ModelPanel() {
         </p>
       </div>
 
-      {/* نموذج التعرف الصوتي */}
+      {/* تجهيز السماع الذكي */}
       <div className="mt-5 rounded-xl border border-line bg-ink-850/70 p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-semibold text-slate-300">نموذج التعرّف الصوتي</span>
+          <span className="text-[11px] font-semibold text-slate-300">السماع الذكي</span>
           <span className="flex items-center gap-1.5 text-[11px] text-slate-300">
             <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} />
             {statusText}
@@ -121,12 +121,12 @@ export default function ModelPanel() {
           className="mt-3 w-full rounded-lg border border-gold-600/50 bg-gold-500/15 py-2 text-sm font-semibold text-gold-200 transition hover:bg-gold-500/25 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {modelStatus === 'ready'
-            ? '✓ النموذج جاهز — ثمّ عمل دون إنترنت'
+            ? '✓ جاهز — ثمّ يعمل دون إنترنت'
             : modelStatus === 'loading'
               ? 'يُنزَّل الآن…'
               : modelStatus === 'error'
                 ? 'إعادة محاولة التنزيل'
-                : 'تنزيل النموذج (مرة واحدة فقط)'}
+                : 'تجهيز السماع الذكي (مرة واحدة فقط)'}
         </button>
         {modelMessage && modelStatus === 'error' && (
           <p className="mt-2 text-[10px] leading-relaxed text-danger-300">{modelMessage}</p>
@@ -136,8 +136,8 @@ export default function ModelPanel() {
             بلا إنترنت
           </Badge>
           <p className="text-[10px] leading-relaxed text-slate-500">
-            بعد أول تنزيل يعمل التطبيق كاملًا دون اتصال بالإنترنت. ولو تعذّر النموذج الذكي استُكمل العمل
-            بتحليلٍ صوتي مبسَّط يبقى قادرًا على كشف مخالفات المدود والغنن.
+            بعد أول تجهيز يعمل التطبيق كاملًا دون اتصال بالإنترنت. ولو تعذّر السماع الذكي استُكمل العمل
+            بقياسٍ صوتيٍّ مباشر يبقى قادرًا على كشف مخالفات المدود والغنن.
           </p>
         </div>
       </div>

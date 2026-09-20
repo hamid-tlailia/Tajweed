@@ -1,5 +1,18 @@
 import type { Config } from 'tailwindcss';
 
+/** خطوط الواجهة: المتوفّرة في أنظمة الجوّال والحاسوب العربية أولًا */
+const LOCAL_UI_STACK = [
+  '"SF Arabic"',
+  '"Geeza Pro"',
+  '"Segoe UI"',
+  '"Noto Sans Arabic"',
+  'Cairo',
+  'Tahoma',
+  'ui-sans-serif',
+  'system-ui',
+  'sans-serif',
+];
+
 const config: Config = {
   content: ['./src/**/*.{ts,tsx}'],
   theme: {
@@ -42,10 +55,24 @@ const config: Config = {
           600: '#E11D48',
         },
       },
+      // خطوط محلية من الجهاز نفسه — لا تُحمَّل أي خطوط من الإنترنت.
+      // الترتيب يبدأ بخطوط المصحف المثبَّتة على الأنظمة (كفهد/أميري/شهرزاد)،
+      // ثم خطوط النظام العربية، ثم بدائل عامة.
       fontFamily: {
-        quran: ['"Amiri Quran"', 'Amiri', 'Noto Naskh Arabic', 'Traditional Arabic', 'serif'],
-        brand: ['Cairo', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        sans: ['Cairo', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        quran: [
+          '"KFGQPC Uthmanic Script HAFS"',
+          '"KFGQPC HAFS Uthmanic Script"',
+          '"Amiri Quran"',
+          'Amiri',
+          '"Scheherazade New"',
+          '"Noto Naskh Arabic"',
+          '"Al Bayan"',
+          '"Traditional Arabic"',
+          '"Times New Roman"',
+          'serif',
+        ],
+        brand: LOCAL_UI_STACK,
+        sans: LOCAL_UI_STACK,
       },
       boxShadow: {
         glow: '0 0 24px rgba(212,175,55,0.18)',

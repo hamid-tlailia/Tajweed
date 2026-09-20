@@ -23,7 +23,7 @@
 //   التفخيم الذاتي لحروف الاستعلاء (خصّ ضغطٍ قِظْ)
 // ويستنتج «الزمن النموذجي» لكل كلمة لمقارنته بالمُقاس وفق عتبة السماح τ.
 
-import type { RuleBadge, WordStatus, WordTajweed } from './types';
+import type { Riwayah, RuleBadge, WordStatus, WordTajweed } from './types';
 import { clamp } from './util';
 
 /* ------------------------------------------------------------------ */
@@ -111,6 +111,72 @@ const FAWATIH = new Set([
 
 /** حروف الجر/العطف اللاصقة المؤثرة في لام الجلالة */
 const ALLAH_PREFIXES = ['و', 'ف', 'ب', 'ك', 'ت'];
+
+/* ------------------------------------------------------------------ */
+/* فروق الروايتين: أزمنة المدود النموذجية (ملي ثانية)                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * الزمن النموذجي لكل مدٍّ بحسب الرواية (حركة ≈ ١٧٥ م.ث في القراءة المرتَّلة):
+ *   • بدل: حفص حركتان (٣٥٠) — ورش له ثلاثة أوجه: حركتان أو أربع أو ستّ،
+ *     فاعتمدنا الوسط (٤ حركات ≈ ٧٠٠) ليكون أدنى الأوجه وأعلاها قريبًا من النافذة.
+ *   • متصل ومنفصل: حفص أربع أو خمس (٧٠٠/٦٠٠) — ورش ستًّا مشبعًا (٩٠٠).
+ *   • الصلة الكبرى: حفص ٤–٥ — ورش ستًّا. واللازم ستٌّ عندهما.
+ */
+const MADD_PROFILE: Record<Riwayah, Record<MaddKind, number>> = {
+  hafs: {
+    tabee: 350,
+    badal: 350,
+    muttasil: 700,
+    munfasil: 600,
+    lazim: 700,
+    silaSughra: 280,
+    silaKubra: 600,
+    leen: 350,
+    arid: 450,
+    iwad: 350,
+  },
+  warsh: {
+    tabee: 350,
+    badal: 700,
+    muttasil: 900,
+    munfasil: 900,
+    lazim: 700,
+    silaSughra: 280,
+    silaKubra: 900,
+    leen: 350,
+    arid: 450,
+    iwad: 350,
+  },
+};
+
+type MaddKind =
+  | 'tabee'
+  | 'badal'
+  | 'muttasil'
+  | 'munfasil'
+  | 'lazim'
+  | 'silaSughra'
+  | 'silaKubra'
+  | 'leen'
+  | 'arid'
+  | 'iwad';
+
+/** كلمات تُفتح ألفها عند ورش وجوبًا (لا تقليل فيها) — بالصورة المجرَّدة */
+const WARSH_FATH_ONLY = new Set([
+  'الي', // إِلَى
+  'علي', // عَلَى
+  'حتي', // حَتَّى
+  'لدي', // لَدَى
+  'الربا',
+  'ربا', // الرِّبَا
+  'مرضات', // مَرْضَاتِ
+  'كلاهما',
+  'اوكلاهما', // أَوَكِلَاهُمَا
+  'مازكي', // مَا زَكَى
+  'مشكوه', // كَمِشْكَاةٍ
+]);
+
 
 /* ------------------------------------------------------------------ */
 /* تجزئة الكلمة إلى محارف (حرف + علاماته)                               */
@@ -333,14 +399,21 @@ function raRule(toks: Tok[]): RuleBadge | null {
 /* ------------------------------------------------------------------ */
 
 /** تحليل متسلسل: يُمرَّر سياق السابقة والتالية لكل كلمة */
-export function analyzeWords(words: string[]): WordTajweed[] {
+export function analyzeWords(words: string[], riwayah: Riwayah = 'hafs'): WordTajweed[] {
   return words.map((raw, i) =>
-    analyzeWord(raw, i + 1 < words.length ? words[i + 1] : '', i > 0 ? words[i - 1] : ''),
+    analyzeWord(raw, i + 1 < words.length ? words[i + 1] : '', i > 0 ? words[i - 1] : '', riwayah),
   );
 }
 
-export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajweed {
+export function analyzeWord(
+  raw: string,
+  nextWord = '',
+  prevWord = '',
+  riwayah: Riwayah = 'hafs',
+): WordTajweed {
   const word = raw;
+  const p = MADD_PROFILE[riwayah];
+  const isWarsh = riwayah === 'warsh';
   const toks = tokenize(word);
   const prevToks = tokenize(prevWord);
   const n = toks.length;
@@ -353,9 +426,10 @@ export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajw
   const ghunnas: { label: string; ms: number }[] = [];
   let qalqalaMs = 0;
 
-  const pushMadd = (label: string, ms: number) => {
+  const pushMadd = (kind: MaddKind, label: string) => {
+    const ms = p[kind];
     madds.push({ label, ms });
-    maddBadges.push({ label, tone: 'gold', note: MADD_NOTES[label] });
+    maddBadges.push({ label, tone: 'gold', note: maddNote(label, riwayah) });
   };
   const pushGhunna = (label: string, ms: number) => {
     ghunnas.push({ label, ms });
@@ -370,7 +444,7 @@ export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajw
   /* ==================== فواتح السور: مد لازم حرفي ==================== */
   const isFatiha =
     FAWATIH.has(stripped) && toks.length > 0 && toks.every((t) => !SHORT.has(t.h) && !TANWEE.has(t.h));
-  if (isFatiha) pushMadd('مَدٌّ لَازِمٌ حَرْفِيّ', 700);
+  if (isFatiha) pushMadd('lazim', 'مَدٌّ لَازِمٌ حَرْفِيّ');
 
   /* ==================== المدود (نقاط المد داخل الكلمة) ==================== */
   const nextHamza = startsWithHamza(nextWord);
@@ -385,29 +459,29 @@ export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajw
     if (isFatiha) continue; // فواتح السور: يكفي اللازم الحرفي
     if (next && next.sh) {
       // لازم كلمي مُثقَّل: سكون أصلي مع شدة بعد المد (ٱلضَّاۤلِّينَ، ٱلۡحَاۤقَّةُ)
-      pushMadd('مَدٌّ لَازِمٌ كَلِمِيٌّ مُثَقَّل', 700);
+      pushMadd('lazim', 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُثَقَّل');
     } else if (next && isSukun(next) && next.ch && !nextIsSilentAlef) {
       // لازم كلمي مُخفَّف: سكون أصلي غير مشدَّد بعد المد (ءَاۤلۡـَٔـٰنَ)
-      pushMadd('مَدٌّ لَازِمٌ كَلِمِيٌّ مُخَفَّف', 700);
+      pushMadd('lazim', 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُخَفَّف');
     } else if (next && !nextIsSilentAlef && isRealHamza(next)) {
       // واجب متصل: همزٌ ملاصق لحرف المد في الكلمة (جَاۤءَ، ٱلسَّمَاۤءِ، دَاۤىِٕمࣱ)
-      pushMadd('مَدٌّ وَاجِبٌ مُتَّصِل', 700);
+      pushMadd('muttasil', 'مَدٌّ وَاجِبٌ مُتَّصِل');
     } else if (endsHere) {
       // ختامي: جائز منفصل إن بدأت التالية بهمزة قطع، وإلا فطبيعي
       if (nextHamza) {
-        pushMadd('مَدٌّ جَائِزٌ مُنْفَصِل', 600);
+        pushMadd('munfasil', 'مَدٌّ جَائِزٌ مُنْفَصِل');
         // إن كان المد بعد همزة اجتمع معه بدلٌ (دُعَاۤءِیۤ إِلَّا: للقارئ الوجهان)
-        if (isRealHamza(toks[i - 1])) pushMadd('مَدُّ الْبَدَل', 350);
+        if (isRealHamza(toks[i - 1])) pushMadd('badal', 'مَدُّ الْبَدَل');
       } else if (isRealHamza(toks[i - 1])) {
-        pushMadd('مَدُّ الْبَدَل', 350); // البدل أخص من الطبيعي ختامًا (ءَامَنُوا۟)
+        pushMadd('badal', 'مَدُّ الْبَدَل'); // البدل أخص من الطبيعي ختامًا (ءَامَنُوا۟)
       } else {
-        pushMadd('مَدٌّ طَبِيعِي', 350);
+        pushMadd('tabee', 'مَدٌّ طَبِيعِي');
       }
     } else if (isRealHamza(toks[i - 1])) {
       // بدل: حرف المد جاء بعد همزة في غير ختام الكلمة (ءَامَنَ، إِيمَٰنَ)
-      pushMadd('مَدُّ الْبَدَل', 350);
+      pushMadd('badal', 'مَدُّ الْبَدَل');
     } else {
-      pushMadd('مَدٌّ طَبِيعِي', 350);
+      pushMadd('tabee', 'مَدٌّ طَبِيعِي');
     }
   }
 
@@ -425,8 +499,8 @@ export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajw
       maddKindOf(toks, n - 2) === null &&
       beforeLast.ch !== 'ل';
     if (marked || structural) {
-      if (nextHamza) pushMadd('مَدُّ الصِّلَة الْكُبْرَى', 600);
-      else if (nextWord || marked) pushMadd('مَدُّ الصِّلَة الصُّغْرَى', 280);
+      if (nextHamza) pushMadd('silaKubra', 'مَدُّ الصِّلَة الْكُبْرَى');
+      else if (nextWord || marked) pushMadd('silaSughra', 'مَدُّ الصِّلَة الصُّغْرَى');
     }
   }
 
@@ -447,7 +521,7 @@ export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajw
       before.ch !== 'ي' &&
       (SHORT.has(lastTok.h) || isTanween(lastTok))
     ) {
-      pushMadd('مَدُّ اللِّين (عند الوقف)', 350);
+      pushMadd('leen', 'مَدُّ اللِّين (عند الوقف)');
     }
   }
   if (
@@ -456,10 +530,10 @@ export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajw
     (SHORT.has(lastTok.h) || (isTanween(lastTok) && !endsWithTanweenAlef(toks))) &&
     maddKindOf(toks, n - 2)
   ) {
-    pushMadd('مَدٌّ عَارِضٌ لِلسُّكُون (عند الوقف)', 450);
+    pushMadd('arid', 'مَدٌّ عَارِضٌ لِلسُّكُون (عند الوقف)');
   }
   if (!nextWord && endsWithTanweenAlef(toks)) {
-    pushMadd('مَدُّ الْعِوَض (عند الوقف على التنوين)', 350);
+    pushMadd('iwad', 'مَدُّ الْعِوَض (عند الوقف على التنوين)');
   }
 
   /* ==================== النون الساكنة والتنوين (بين كلمتين) ==================== */
@@ -587,6 +661,64 @@ export function analyzeWord(raw: string, nextWord = '', prevWord = ''): WordTajw
     }
   }
 
+  /* ==================== فروق رواية ورش عن نافع (من طريق الأزرق) ==================== */
+  if (isWarsh) {
+    // ١) النَّقْل: حركة الهمزة تنتقل إلى الساكن الصحيح المنفصل قبلها وتسقط الهمزة
+    //    (مِنْ آمَنَ ← مِنَامَن)، ولا يُنقل إلى حرف مدٍّ ولا لين.
+    if (startsWithHamza(nextWord) && n > 0) {
+      const last = toks[n - 1];
+      const isSakinConsonant =
+        !!last &&
+        !!last.ch &&
+        !['ا', 'ى', 'و', 'ي'].includes(last.ch) &&
+        !last.sh &&
+        !TANWEE.has(last.h) &&
+        (last.h === SUKUN || last.h === '') &&
+        maddKindOf(toks, n - 1) === null &&
+        !isSilentFinalAlef(last, toks[n - 2]);
+      if (isSakinConsonant) {
+        otherBadges.push({ label: 'نَقْل حركة الهمزة', tone: 'slate', note: NOTE_WARSH_NAQL });
+      }
+    }
+
+    // ٢) إبدال الهمز الساكن حرفَ مدٍّ من جنس حركة ما قبله (يَأْكُلُ ← يَاكُلُ، يُؤْمِنُ ← يُومِنُ،
+    //    الذِّئْبُ ← الذِّيبُ) — ويُترك على الأصل إن جاء بعده حرف مدّ.
+    for (let i = 1; i + 1 < n; i++) {
+      const t = toks[i];
+      if (!isRealHamza(t) || !isSukun(t)) continue;
+      const before = toks[i - 1];
+      if (!before || !SHORT.has(before.h)) continue;
+      // يُترك على الأصل إن جاء بعد الهمزة حرف علّة (نحو: مَأْوَى) أو همزةٌ أخرى،
+      // وكذلك الهمزة المتطرّفة (نحو: ٱقۡرَأۡ) فحكمها حكم الوقف لا الإبدال.
+      const after = toks[i + 1];
+      if (!after?.ch || ['ا', 'و', 'ي', 'ى'].includes(after.ch) || isRealHamza(after)) continue;
+      otherBadges.push({ label: 'إبدال الهمز الساكن', tone: 'mint', note: NOTE_WARSH_IBDAL });
+      break;
+    }
+
+    // ٣) الهمزتان في كلمة: يحقّق ورش الأولى ويسهّل الثانية (أو يبدلها حرف مدّ من طريق الأزرق)
+    for (let i = 0; i + 1 < n; i++) {
+      if (isRealHamza(toks[i]) && isRealHamza(toks[i + 1])) {
+        otherBadges.push({ label: 'الهمزتان في كلمة', tone: 'mint', note: NOTE_WARSH_HAMZATAIN });
+        break;
+      }
+    }
+
+    // ٤) تقليل ذوات الياء: كل ألفٍ انقلبت عن ياء أو رُسمت بها (هُدَى، مُوسَى، تَقْوَى، ٱشْتَرَى)
+    const lastW = toks[n - 1];
+    if (!!lastW && lastW.ch === 'ى' && lastW.h === '' && !WARSH_FATH_ONLY.has(stripped)) {
+      otherBadges.push({ label: 'تقليل ذوات الياء', tone: 'slate', note: NOTE_WARSH_IMALA_YA });
+    }
+
+    // ٥) تقليل ذوات الراء: الألف التي قبل راءٍ مكسورة (ٱلنَّارِ، ٱلدَّارِ، ٱلْأَبْرَارِ، أَبْصَارِهِمْ)
+    for (let i = 0; i + 1 < n; i++) {
+      if (toks[i].ch === 'ا' && toks[i + 1].ch === 'ر' && toks[i + 1].h === KASRA) {
+        otherBadges.push({ label: 'تقليل ذوات الراء', tone: 'slate', note: NOTE_WARSH_IMALA_RA });
+        break;
+      }
+    }
+  }
+
   /* ==================== النتيجة ==================== */
   const rules = [...maddBadges, ...ghunnaBadges, ...otherBadges];
   const isMadd = madds.length > 0;
@@ -667,10 +799,54 @@ const NOTE_LAM_ALLAH_TARQIQ = 'لام لفظ الجلالة تُرقَّق إذ�
 const NOTE_LAM_QAMAR = 'لام التعريف قبل حرف قمري (أ ب ج ح خ ع غ ف ق ك م هـ و ي): تُقرأ ساكنة ظاهرة.';
 const NOTE_LAM_SHAMS = 'لام التعريف قبل حرف شمسي (ت ث د ذ ر ز س ش ص ض ط ظ ل ن): تُدغم فيه ويُشدَّد الحرف (ٱلشَّهۡر).';
 const NOTE_ISTILA = 'حروف الاستعلاء (خُصَّ ضَغْطٍ قِظْ) مفخَّمة دائمًا: يُرفع بها أقصى اللسان عند النطق.';
-const GHUNNA_NOTE = 'الغُنّة: صوت رخيم يخرج من الخيشوم مقداره حركتان، لازمة في هذا الموضع عند حفص.';
+const GHUNNA_NOTE =
+  'الغُنّة: صوت رخيم يخرج من الخيشوم مقداره حركتان — وهي في هذا الموضع لازمةٌ عند جميع القراء، لا خلاف فيها بين الروايات.';
 const GHUNNA_NOTES: Record<string, string> = {
-  'غُنّة مَدِّية': 'النون أو الميم المشدَّدة غُنّة واجبة بمقدار حركتين (إِنَّ، ثُمَّ).',
+  // غُنّة المشدَّدتين حكمٌ متَّفقٌ عليه عند كل القراء، لا خاصّةً بحفص؛ ومنه نون «ٱلنَّفَّاثَاتِ».
+  'غُنّة مَدِّية':
+    'النون أو الميم المشدَّدة تُغَنّ بمقدار حركتين، وهو حكمٌ متَّفقٌ عليه عند كل القراء — ومنه نون «ٱلنَّفَّاثَاتِ» في سورة الفلق (وَمِن شَرِّ ٱلنَّفَّاثَاتِ)، ومنه (إِنَّ، ثُمَّ).',
 };
+
+/* ------------------------------------------------------------------ */
+/* فروق رواية ورش: شروح موجزة                                          */
+/* ------------------------------------------------------------------ */
+
+const NOTE_WARSH_NAQL =
+  'النَّقْل من خصائص ورش: ينقل حركة الهمزة إلى الساكن الصحيح المنفصل قبلها ثم تسقط الهمزة، نحو «مِنْ آمَنَ» تُقرأ «مِنَامَن» — ولا يُنقل إلى حرف مدٍّ أو لين.';
+const NOTE_WARSH_IBDAL =
+  'يُبدل ورش الهمزة الساكنة حرفَ مدٍّ من جنس حركة ما قبلها: يَأْكُلُ ← يَاكُلُ، يُؤْمِنُ ← يُومِنُ، ٱلذِّئْبُ ← ٱلذِّيبُ — وحفص يحقّق الهمزة.';
+const NOTE_WARSH_HAMZATAIN =
+  'الهمزتان في كلمة (ءَأَنذَرْتَهُم): يُحقّق ورش الأولى ويسهّل الثانية بين بين، أو يُبدلها حرف مدٍّ من طريق الأزرق — وحفص يحقّقهما معًا.';
+const NOTE_WARSH_IMALA_YA =
+  'لورش في الألف المنقلبة عن ياء — أو المرسومة بها — وجهان: الفتح والتقليل، والتقليل مقدَّم أداءً (ٱلْهُدَى، مُوسَى، تَقْوَى، ٱشْتَرَى)، ويُفتح ما كان من نحو: إِلَى، عَلَى، حَتَّى، لَدَى، ٱلرِّبَا.';
+const NOTE_WARSH_IMALA_RA =
+  'الألف الواقعة قبل راءٍ مكسورة يُقلّلها ورش قولًا واحدًا (ٱلنَّارِ، ٱلدَّارِ، ٱلْأَبْرَارِ، أَبْصَارِهِمْ)، وفي (ٱلْجَارِ، ٱلْجَبَّارِينَ) له الفتح والتقليل مع تغليظ اللام.';
+
+/** أحكام لا تظهر إلا في رواية ورش (تُوسَم في الواجهة «خاصة بورش») */
+export const WARSH_ONLY_RULES = [
+  'نَقْل حركة الهمزة',
+  'إبدال الهمز الساكن',
+  'الهمزتان في كلمة',
+  'تقليل ذوات الياء',
+  'تقليل ذوات الراء',
+];
+
+const WARSH_MADD_NOTES: Record<string, string> = {
+  'مَدُّ الْبَدَل':
+    'جاء حرف المد بعد همزة (ءَامَنُواْ، إِيمَٰنࣱ)؛ ولورش فيه ثلاثة أوجه: حركتان أو أربع أو ستّ، وحفص يقصره حركتين.',
+  'مَدٌّ وَاجِبٌ مُتَّصِل': 'همزٌ بعد حرف المد في الكلمة نفسها (جَاۤءَ)؛ يمدّه ورش ستّ حركات مشبعةً، وحفص أربعًا أو خمسًا.',
+  'مَدٌّ جَائِزٌ مُنْفَصِل': 'انتهت الكلمة بمدٍّ وجاء همزٌ في أول التي بعدها (هُوَ أَكۡرَمَ)؛ يمدّه ورش ستًّا، وحفص أربعًا أو خمسًا.',
+  'مَدُّ الصِّلَة الْكُبْرَى': 'هاء ضمير جاء بعدها همز قطع (عَهۡدَهُۥۤ أَمۡ)؛ يمدّها ورش ستًّا، وحفص أربعًا أو خمسًا.',
+};
+
+/** شرح المدّ بحسب الرواية (الفروق في البدل والمتصل والمنفصل والصلة الكبرى) */
+function maddNote(label: string, riwayah: Riwayah): string | undefined {
+  if (riwayah === 'warsh') {
+    const w = WARSH_MADD_NOTES[label];
+    if (w) return w;
+  }
+  return MADD_NOTES[label];
+}
 
 const MADD_NOTES: Record<string, string> = {
   'مَدٌّ طَبِيعِي': 'يُمدّ بمقدار حركتين عند خلوّه من الهمز والسكون بعده (قَالَ، ٱلۡعَـٰلَمِينَ).',
@@ -717,4 +893,9 @@ export const RULE_GLOSSARY: Record<string, string> = {
   'لام الجلالة مفخَّمة': NOTE_LAM_ALLAH_TAFKHIM,
   'لام الجلالة مرقَّقة': NOTE_LAM_ALLAH_TARQIQ,
   'حرف استعلاء (تفخيم)': NOTE_ISTILA,
+  'نَقْل حركة الهمزة': NOTE_WARSH_NAQL,
+  'إبدال الهمز الساكن': NOTE_WARSH_IBDAL,
+  'الهمزتان في كلمة': NOTE_WARSH_HAMZATAIN,
+  'تقليل ذوات الياء': NOTE_WARSH_IMALA_YA,
+  'تقليل ذوات الراء': NOTE_WARSH_IMALA_RA,
 };

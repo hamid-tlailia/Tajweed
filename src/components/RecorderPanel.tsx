@@ -79,6 +79,7 @@ export default function RecorderPanel() {
   const data = useTahqiq((s) => s.surahCache[s.selectedSurahId] ?? null);
   const scope = useTahqiq((s) => s.scope);
   const selectedAyah = useTahqiq((s) => s.selectedAyah);
+  const riwayah = useTahqiq((s) => s.riwayah);
   const modelSize = useTahqiq((s) => s.modelSize);
   const tau = useTahqiq((s) => s.tau);
   const recording = useTahqiq((s) => s.recording);
@@ -131,7 +132,7 @@ export default function RecorderPanel() {
     try {
       const res = await runAlignment(
         input,
-        { tau, modelSize, target },
+        { tau, modelSize, target, riwayah },
         {
           stage: (s) => setProcessing(true, s),
           model: modelHook,
@@ -202,7 +203,7 @@ export default function RecorderPanel() {
   function onDemo() {
     if (!data || processing) return;
     const target = buildTarget(data, scope, selectedAyah);
-    const tjs = analyzeWords(target.words.map((w) => w.word));
+    const tjs = analyzeWords(target.words.map((w) => w.word), riwayah);
     const samples = makeDemoSamples(tjs);
     void runAnalysis({ samples, url: null, demo: true });
   }
