@@ -60,7 +60,12 @@ export function buildTarget(data: SurahData, scope: 'ayah' | 'surah', ayah: numb
   const ayahs = scope === 'ayah' ? data.ayahs.filter((a) => a.numberInSurah === ayah) : data.ayahs;
   const words: TargetSpec['words'] = [];
   for (const a of ayahs) {
-    for (const w of a.text.split(/\s+/).filter(Boolean)) words.push({ word: w, ayah: a.numberInSurah });
+    // نص المصحف يتضمّن U+200A (مسافة شعرية) و U+2060 (موصِل كلمة) يقسِّمان بعض الكلمات
+    // فتتفتت في التحليل والعرض — تُزال لتبقى الكلمة القرآنية واحدة.
+    const clean = a.text.replace(/[\u200A\u2060\u200C\uFEFF]/g, '');
+    for (const w of clean.split(/\s+/).filter((w) => /[\u0621-\u064A]/.test(w))) {
+      words.push({ word: w, ayah: a.numberInSurah });
+    }
   }
   return {
     key: `${data.id}:${scope}:${scope === 'ayah' ? ayah : 'all'}`,

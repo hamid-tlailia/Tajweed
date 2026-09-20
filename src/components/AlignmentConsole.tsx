@@ -9,10 +9,10 @@ import { Badge, IconPause, IconPlay, IconWaveEmpty, Panel, Stat, StatusBadge } f
 const MAX_ROWS = 500;
 
 const ENGINE_LABEL: Record<string, string> = {
-  'whisper-attn': 'Whisper + Cross-Attention',
-  'whisper-ts': 'Whisper + التوقيت الزمني',
-  'whisper-energy': 'Whisper + Energy-DTW',
-  'offline-dtw': 'Energy-DTW (احتياطي)',
+  'whisper-attn': 'النموذج الذكي (تتبّع دقيق لكل كلمة)',
+  'whisper-ts': 'النموذج الذكي (توقيت المقاطع)',
+  'whisper-energy': 'النموذج الذكي + تحليل الصوت',
+  'offline-dtw': 'تحليل الصوت (احتياطي)',
 };
 
 /* ---------- violation alert (vibration + beep) ---------- */
@@ -189,11 +189,11 @@ export default function AlignmentConsole() {
 
   if (processing) {
     return (
-      <Panel title="مَخرَجُ التَّراصُف" subtitle="أثناء التنفيذ يظهر هنا توقيت كل كلمة ونسبة الثقة" latin="Alignment Console">
+      <Panel title="نتيجة التلاوة" subtitle="يقارن التطبيق صوتَك الآن بكل كلمة من النصّ">
         <div className="flex flex-col items-center gap-4 py-12 text-center">
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-gold-500/30 border-t-gold-400" />
           <p className="font-quran text-lg text-gold-200">جارٍ التحليل…</p>
-          <p className="font-brand text-xs text-slate-400">{stage}</p>
+          <p className="text-xs text-slate-400">{stage}</p>
           <div className="h-1.5 w-64 overflow-hidden rounded-full bg-ink-700">
             <div className="shimmer h-full w-full" />
           </div>
@@ -204,15 +204,15 @@ export default function AlignmentConsole() {
 
   if (!result) {
     return (
-      <Panel title="مَخرَجُ التَّراصُف" subtitle="سيظهر هنا توقيت كل كلمة ونسبة الثقة وأحكام التجويد" latin="Alignment Console">
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-line py-16 text-center">
-          <IconWaveEmpty className="h-10 w-28 text-slate-600" />
-          <p className="font-quran text-lg text-slate-300">لا توجد نتيجة بعد</p>
-          <p className="max-w-md text-xs leading-relaxed text-slate-500">
-            اختر السورة والآية، ثم سجّل تلاوتك أو ارفع ملفًا صوتيًا — أو جرّب{' '}
-            <b className="text-gold-300">العرض التجريبي</b> لمعاينة المحرّك كاملًا دون ميكروفون.
-          </p>
-        </div>
+      <Panel title="نتيجة التلاوة" subtitle="سيظهر هنا تقييمُ تلاوتك كلمةً كلمة مع أحكام التجويد">
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-line py-16 text-center">
+            <IconWaveEmpty className="h-10 w-28 text-slate-600" />
+            <p className="font-quran text-lg text-slate-300">لا توجد نتيجة بعد</p>
+            <p className="max-w-md text-xs leading-relaxed text-slate-500">
+              اختر السورة والآية من الأعلى، ثم اضغط زرّ الميكروفون وسجّل تلاوتك — أو اضغط{' '}
+              <b className="text-gold-300">«تجربة سريعة»</b> لترى مثالًا جاهزًا دون تسجيل.
+            </p>
+          </div>
       </Panel>
     );
   }
@@ -222,9 +222,8 @@ export default function AlignmentConsole() {
 
   return (
     <Panel
-      title="مَخرَجُ التَّراصُف"
+      title="نتيجة التلاوة"
       subtitle={`${result.targetLabel} — ${result.verdict}`}
-      latin="Alignment Console"
       className="fade-up"
     >
       {result.audioUrl ? <audio ref={audioRef} src={result.audioUrl} className="hidden" preload="auto" /> : null}
@@ -259,26 +258,26 @@ export default function AlignmentConsole() {
 
       {/* summary stats */}
       <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
-        <Stat label="الدرجة الكلية" value={`${result.overallScore}%`} tone={scoreTone} sub="متوسط الثقة × مطابقة التجويد" />
+        <Stat label="الدرجة الكلية" value={`${result.overallScore}%`} tone={scoreTone} sub="يجمع دقةَ النطق وصحةَ المدود والغنن" />
         <Stat
           label="مطابقة النسخ"
           value={`${Math.round(result.transcriptMatch * 100)}%`}
           tone="gold"
-          sub="نسخ النموذج مقابل النص المستهدف"
+          sub="مدى تطابق ما قرأتَه مع الآية"
         />
-        <Stat label="المدة المُقاسة" value={fmtTime(result.durationMs)} sub="من بداية العيّنة إلى نهايتها" />
+        <Stat label="مدة التلاوة" value={fmtTime(result.durationMs)} sub="من بداية التسجيل لنهايته" />
         <Stat
-          label="المحرّك المستخدَم"
+          label="طريقة التقييم"
           value={<span className="text-[13px]">{ENGINE_LABEL[result.engine]}</span>}
           tone="slate"
-          sub={result.demo ? 'عرض تجريبي — بلا ميكروفون' : 'معالجة على الجهاز (On-Device)'}
+          sub={result.demo ? 'محاكاة للتجربة — بلا ميكروفون' : 'على جهازك دون إنترنت'}
         />
       </div>
 
       {/* transcript diff */}
       {result.transcript ? (
         <div className="mt-3 rounded-xl border border-line bg-ink-850/50 p-3.5">
-          <h4 className="text-[11px] text-slate-400">ما التقطه النموذج (Transcript) — الكلمات غير المطابقة مُظلَّلة</h4>
+          <h4 className="text-[11px] text-slate-400">ما سمعه التطبيق من تلاوتك — ما نقص أو اختلف مُظلَّل</h4>
           <p className="mt-2 font-quran text-lg leading-9 text-slate-200">
             {result.predWords.length ? (
               result.predWords.map((w, i) => (
@@ -300,11 +299,11 @@ export default function AlignmentConsole() {
             <tr className="bg-ink-800 text-slate-400">
               <th className="px-3 py-2.5 text-start font-medium">#</th>
               <th className="px-3 py-2.5 text-start font-medium">الكلمة</th>
-              <th className="px-3 py-2.5 text-start font-medium">البداية</th>
-              <th className="px-3 py-2.5 text-start font-medium">النهاية</th>
-              <th className="px-3 py-2.5 text-start font-medium">المدة (قياس / متوقع)</th>
-              <th className="px-3 py-2.5 text-start font-medium">الثقة</th>
-              <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
+              <th className="px-3 py-2.5 text-start font-medium">البَدء</th>
+              <th className="px-3 py-2.5 text-start font-medium">الانتهاء</th>
+              <th className="px-3 py-2.5 text-start font-medium">المدة (فعلية / مطلوبة)</th>
+              <th className="px-3 py-2.5 text-start font-medium">دقة النطق</th>
+              <th className="px-3 py-2.5 text-start font-medium">الحكم على تلاوتك</th>
               <th className="px-3 py-2.5 text-start font-medium">أحكام التجويد</th>
             </tr>
           </thead>
@@ -352,15 +351,17 @@ export default function AlignmentConsole() {
                   <span className="flex flex-wrap items-center gap-1">
                     {w.tajweed.rules.length ? (
                       w.tajweed.rules.slice(0, 3).map((r, k) => (
-                        <Badge key={k} tone={r.tone}>
-                          {r.label}
-                        </Badge>
+                        <span key={k} title={r.note} className={r.note ? 'cursor-help' : ''}>
+                          <Badge tone={r.tone}>{r.label}</Badge>
+                        </span>
                       ))
                     ) : (
                       <span className="text-slate-600">—</span>
                     )}
                     {w.tajweed.rules.length > 3 ? (
-                      <span className="text-[9px] text-slate-600">+{w.tajweed.rules.length - 3}</span>
+                      <span className="text-[9px] text-slate-600" title={w.tajweed.rules.slice(3).map((r) => r.label).join('، ')}>
+                        +{w.tajweed.rules.length - 3}
+                      </span>
                     ) : null}
                   </span>
                 </td>

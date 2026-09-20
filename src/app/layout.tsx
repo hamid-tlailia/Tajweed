@@ -3,9 +3,9 @@ import PWARegister from '@/components/PWARegister';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'تحقيق · TAHQĪQ — محرِّك التحقق من التلاوة على الجهاز',
+  title: 'تَحَقُّق — تعلّم التجويد وسجّل تلاوتك بثقة',
   description:
-    'منصّة ويب للتحقق من التلاوة القرآنية عبر Whisper (WASM/ONNX) مع التراصف القسري (Teacher Forcing) وتقييم أزمنة المدود والغنن — كل المعالجة على جهازك.',
+    'تطبيق عربي للتدريب على تلاوة القرآن بالتجويد: يسمع تلاوتك على جهازك دون إنترنت، ويعرض لك أحكام المدود والغنن والراءات وغيرها لكل كلمة مع تقييم نطقك لها.',
 };
 
 export const viewport: Viewport = {
@@ -26,11 +26,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="تحقيق" />
         <meta name="theme-color" content="#070B10" />
-        <meta name="description" content="محرّك التحقق من التلاوة القرآنية على الجهاز — Whisper WASM/ONNX مع التراصف القسري" />
+        <meta name="description" content="تطبيق التدريب على تجويد التلاوة — يعمل على جهازك دون رفع صوتك إلى الإنترنت" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700&family=Amiri+Quran&family=Cairo:wght@300;400;600;700;800&display=swap"
           rel="stylesheet"
         />
       </head>

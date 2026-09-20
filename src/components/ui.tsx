@@ -6,26 +6,19 @@ import type { WordStatus } from '@/lib/types';
 export function Panel({
   title,
   subtitle,
-  latin,
   children,
   className = '',
 }: {
   title: string;
   subtitle?: string;
-  latin?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <section className={`min-w-0 rounded-2xl border border-line/80 bg-ink-900/70 shadow-[0_0_30px_rgba(0,0,0,0.35)] backdrop-blur-sm ${className}`}>
-      <header className="flex items-center justify-between gap-3 border-b border-line/60 px-5 py-3.5">
-        <div>
-          <h2 className="font-quran text-lg leading-none text-gold-200">{title}</h2>
-          {subtitle ? <p className="mt-1 text-[11px] text-slate-400">{subtitle}</p> : null}
-        </div>
-        {latin ? (
-          <span className="whitespace-nowrap font-brand text-[10px] uppercase tracking-[0.25em] text-slate-500">{latin}</span>
-        ) : null}
+      <header className="border-b border-line/60 px-5 py-4">
+        <h2 className="font-quran text-xl leading-none text-gold-200">{title}</h2>
+        {subtitle ? <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">{subtitle}</p> : null}
       </header>
       <div className="p-5">{children}</div>
     </section>
@@ -83,10 +76,10 @@ export function Stat({
 
 const statusMap: Record<WordStatus, { t: string; c: string }> = {
   excellent: { t: 'مُتقَن ✓', c: 'border-mint-500/50 bg-mint-500/15 text-mint-300' },
-  ok: { t: 'متوافق', c: 'border-mint-500/30 bg-mint-500/10 text-mint-300/90' },
-  short: { t: 'قصير ↓', c: 'border-warn-500/50 bg-warn-500/15 text-warn-300' },
-  long: { t: 'طويل ↑', c: 'border-warn-500/50 bg-warn-500/15 text-warn-300' },
-  silent: { t: 'غير مسموع', c: 'border-danger-500/50 bg-danger-500/15 text-danger-300' },
+  ok: { t: 'جيد', c: 'border-mint-500/30 bg-mint-500/10 text-mint-300/90' },
+  short: { t: 'أقصر من المطلوب ↓', c: 'border-warn-500/50 bg-warn-500/15 text-warn-300' },
+  long: { t: 'أطول من المطلوب ↑', c: 'border-warn-500/50 bg-warn-500/15 text-warn-300' },
+  silent: { t: 'لم يُسمع', c: 'border-danger-500/50 bg-danger-500/15 text-danger-300' },
 };
 
 export function StatusBadge({ status }: { status: WordStatus }) {

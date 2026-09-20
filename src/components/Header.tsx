@@ -2,7 +2,7 @@
 
 import { useTahqiq } from '@/store';
 
-function LogoMark({ className = 'h-10 w-10 sm:h-11 sm:w-11' }: { className?: string }) {
+function LogoMark({ className = 'h-11 w-11 sm:h-12 sm:w-12' }: { className?: string }) {
   return (
     <svg viewBox="0 0 48 48" className={`${className} shrink-0 drop-shadow-[0_0_10px_rgba(212,175,55,0.35)]`}>
       <defs>
@@ -13,7 +13,7 @@ function LogoMark({ className = 'h-10 w-10 sm:h-11 sm:w-11' }: { className?: str
       </defs>
       <rect x="7" y="7" width="34" height="34" rx="8" transform="rotate(45 24 24)" fill="none" stroke="url(#tahqiq-gld)" strokeWidth="2.5" />
       <rect x="11.5" y="11.5" width="25" height="25" rx="6" transform="rotate(45 24 24)" fill="rgba(212,175,55,0.10)" />
-      <text x="24" y="30" textAnchor="middle" fontSize="15" fill="#F1DC9B" fontFamily="Amiri, serif">
+      <text x="24" y="31" textAnchor="middle" fontSize="17" fill="#F1DC9B" fontFamily="Amiri, serif">
         ت
       </text>
     </svg>
@@ -23,56 +23,35 @@ function LogoMark({ className = 'h-10 w-10 sm:h-11 sm:w-11' }: { className?: str
 export default function Header() {
   const modelStatus = useTahqiq((s) => s.modelStatus);
   const modelProgress = useTahqiq((s) => s.modelProgress);
-  const modelSize = useTahqiq((s) => s.modelSize);
-  const tau = useTahqiq((s) => s.tau);
 
   const status =
     modelStatus === 'ready'
-      ? { dot: 'bg-mint-400', text: 'جاهز — يعمل على جهازك', cls: 'text-mint-300' }
+      ? { dot: 'bg-mint-400', text: 'التعرّف الصوتي جاهز', cls: 'text-mint-300' }
       : modelStatus === 'loading'
-        ? { dot: 'bg-warn-400 animate-pulse', text: `جارٍ التحميل ${Math.round(modelProgress * 100)}%`, cls: 'text-warn-300' }
+        ? { dot: 'bg-warn-400 animate-pulse', text: `يُنزَّل نموذج التعرّف… ${Math.round(modelProgress * 100)}%`, cls: 'text-warn-300' }
         : modelStatus === 'error'
-          ? { dot: 'bg-danger-400 animate-pulse', text: 'تعذّر Whisper — المحرّك الاحتياطي يعمل', cls: 'text-danger-300' }
-          : { dot: 'bg-slate-500', text: 'الخمول — النموذج غير محمَّل بعد', cls: 'text-slate-400' };
+          ? { dot: 'bg-danger-400 animate-pulse', text: 'سيعمل بالتحليل الصوتي البديل', cls: 'text-danger-300' }
+          : { dot: 'bg-slate-500', text: 'لم يُنزَّل نموذج التعرّف بعد', cls: 'text-slate-400' };
 
   return (
     <header className="sticky top-0 z-40 border-b border-line/70 bg-ink-950/90 backdrop-blur-md">
-      <div className="mx-auto max-w-[1500px] px-3 py-2.5 sm:px-5 sm:py-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-          {/* logo + title */}
-          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+      <div className="mx-auto max-w-[1500px] px-3 py-3 sm:px-5 sm:py-3.5">
+        <div className="flex items-center gap-3 sm:gap-4">
+          {/* الشعار والعنوان */}
+          <div className="flex min-w-0 items-center gap-3">
             <LogoMark />
             <div className="min-w-0 leading-tight">
-              <div className="flex items-baseline gap-2">
-                <span className="font-brand text-lg font-bold tracking-[0.16em] text-gold-400 sm:text-xl sm:tracking-[0.18em]">
-                  TAHQĪQ
-                </span>
-                <span className="font-quran text-xl text-gold-200 sm:text-2xl">تَحَقُّق</span>
-              </div>
-              <p className="hidden truncate text-[11px] text-slate-400 sm:block">محرِّك التحقق من التلاوة — بالمعالجة على الجهاز</p>
+              <h1 className="font-quran text-2xl font-bold text-gold-300 sm:text-[27px]">تَحَقُّق</h1>
+              <p className="mt-0.5 truncate text-[11px] text-slate-400 sm:text-xs">
+                اسمع تلاوتك كما يسمعها المُجوِّد — مدودٌ وغننٌ وأحكام
+              </p>
             </div>
           </div>
 
-          {/* engine status + quick stats */}
-          <div className="flex min-w-0 items-center gap-2.5 sm:ms-auto sm:gap-3">
-            <div className="flex min-w-0 items-center gap-2.5 rounded-full border border-line bg-ink-900/80 px-3 py-1.5 sm:px-4 sm:py-2">
-              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${status.dot}`} />
-              <div className="min-w-0 leading-tight">
-                <div className="font-brand text-[9px] tracking-[0.18em] text-slate-300 sm:text-[10px] sm:tracking-[0.22em]">
-                  ON-DEVICE WHISPER · WASM
-                </div>
-                <div className={`truncate text-[10px] ${status.cls} sm:text-[11px]`}>{status.text}</div>
-              </div>
-            </div>
-            <div className="hidden items-center gap-4 rounded-xl border border-line bg-ink-900/60 px-4 py-2 text-[11px] text-slate-300 lg:flex">
-              <span>
-                النموذج: <b className="font-brand text-gold-300">{modelSize} · {modelSize === 'tiny' ? '~43' : '~80'}MB</b>
-              </span>
-              <span className="h-4 w-px bg-line" />
-              <span>
-                τ = <b className="font-brand text-mint-300">{tau.toFixed(2)}</b>
-              </span>
-            </div>
+          {/* حالة نموذج التعرف — لغة يفهمها كل مستخدم */}
+          <div className="ms-auto flex items-center gap-2.5 rounded-full border border-line bg-ink-900/80 px-3.5 py-2 sm:px-4">
+            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${status.dot}`} />
+            <span className={`truncate text-[11px] sm:text-xs ${status.cls}`}>{status.text}</span>
           </div>
         </div>
       </div>

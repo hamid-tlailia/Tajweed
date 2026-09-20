@@ -43,9 +43,9 @@ const config: Config = {
         },
       },
       fontFamily: {
-        quran: ['Amiri', 'Noto Naskh Arabic', 'Traditional Arabic', 'Scheherazade New', 'serif'],
-        brand: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        quran: ['"Amiri Quran"', 'Amiri', 'Noto Naskh Arabic', 'Traditional Arabic', 'serif'],
+        brand: ['Cairo', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        sans: ['Cairo', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
         glow: '0 0 24px rgba(212,175,55,0.18)',

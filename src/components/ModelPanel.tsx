@@ -5,8 +5,8 @@ import { useTahqiq } from '@/store';
 import { Badge, Panel } from './ui';
 
 const SIZES: { id: ModelSize; label: string; size: string; hint: string }[] = [
-  { id: 'tiny', label: 'Whisper-tiny', size: '~43MB', hint: 'أخفُّ — تحميل أسرع ومعالجة فورية' },
-  { id: 'base', label: 'Whisper-base', size: '~80MB', hint: 'أدق — أعلى مطابقة لتفاصيل النطق' },
+  { id: 'tiny', label: 'سريعة', size: '٤٣ م.ب', hint: 'تنزيل أخفّ — تكفي للتدريب اليومي' },
+  { id: 'base', label: 'أدقّ', size: '٨٠ م.ب', hint: 'تمييز أدقّ لأصوات الحروف — يُوصى بها' },
 ];
 
 export default function ModelPanel() {
@@ -29,21 +29,19 @@ export default function ModelPanel() {
           : 'bg-slate-500';
   const statusText =
     modelStatus === 'ready'
-      ? 'مُحمَّل على الجهاز ✓'
+      ? 'جاهز ✓'
       : modelStatus === 'loading'
-        ? `جارٍ التحميل ${Math.round(modelProgress * 100)}%`
+        ? `يُنزَّل… ${Math.round(modelProgress * 100)}%`
         : modelStatus === 'error'
-          ? 'تعذّر مسار Whisper — المحرّك الاحتياطي يعمل'
-          : 'لم يُحمَّل بعد';
+          ? 'تعذّر — سيعمل التحليل البديل'
+          : 'لم يُنزَّل بعد';
 
   return (
     <Panel
-      title="إعدادات محرِّك التَّراصُف"
-      subtitle="Forced Alignment — Whisper on ONNX Runtime Web"
-      latin="Alignment Model"
-      className="mb-5"
+      title="إعدادات التقييم"
+      subtitle="اختر دقة التعرّف على الصوت ومدى صرامة الحكم على نطقك"
     >
-      {/* model size */}
+      {/* دقة النموذج */}
       <div className="grid grid-cols-2 gap-2.5">
         {SIZES.map((sz) => {
           const sel = modelSize === sz.id;
@@ -58,10 +56,10 @@ export default function ModelPanel() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className={`font-brand text-[11px] font-semibold sm:text-[13px] ${sel ? 'text-gold-200' : 'text-slate-200'}`}>
+                <span className={`text-sm font-semibold ${sel ? 'text-gold-200' : 'text-slate-200'}`}>
                   {sz.label}
                 </span>
-                <span className="font-brand text-[10px] text-slate-400">{sz.size}</span>
+                <span className="text-[10px] text-slate-400">{sz.size}</span>
               </div>
               <p className="mt-1 text-[10px] leading-snug text-slate-500">{sz.hint}</p>
             </button>
@@ -69,14 +67,14 @@ export default function ModelPanel() {
         })}
       </div>
 
-      {/* τ slider */}
+      {/* صرامة التقييم */}
       <div className="mt-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <label htmlFor="tau" className="text-xs text-slate-300">
-            معيار المطابقة <span className="font-brand text-gold-300">τ (Match Threshold)</span>
+          <label htmlFor="tau" className="text-xs font-semibold text-slate-200">
+            صرامة التقييم
           </label>
-          <span className="rounded-md border border-line bg-ink-800 px-2 py-0.5 font-brand text-xs text-mint-300">
-            {tau.toFixed(2)}
+          <span className="rounded-md border border-line bg-ink-800 px-2.5 py-0.5 text-xs text-mint-300">
+            {tau < 0.35 ? 'متساهل' : tau < 0.7 ? 'متوازن' : 'صارم'}
           </span>
         </div>
         <input
@@ -89,22 +87,21 @@ export default function ModelPanel() {
           value={tau}
           onChange={(e) => setTau(Number(e.target.value))}
           className="mt-3 w-full"
+          aria-label="صرامة التقييم"
         />
         <div className="mt-1.5 flex justify-between text-[10px] text-slate-500">
-          <span>0.0 · مُيسَّر (±60%)</span>
-          <span>1.0 · تجويد صارم (±15%)</span>
+          <span>متساهل — في أول التعلّم</span>
+          <span>صارم — كما للممتازين</span>
         </div>
         <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
-          τ يضبط سماحية مطابقة مدة الكلمة المُقاسة إلى مدّتها النموذجية المستنبطة من التشكيل (المدود، الغنن).
+          كلما زادت الصرامة طالبَ التطبيقُ نطقَك بأدقّ مقدارٍ للمدود والغنن (طبيعي حركتان، متصل ٤–٥، لازم ٦…).
         </p>
       </div>
 
-      {/* backend + load */}
+      {/* نموذج التعرف الصوتي */}
       <div className="mt-5 rounded-xl border border-line bg-ink-850/70 p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="min-w-0 text-[11px] text-slate-400">
-            المُشغِّل: <b className="font-brand text-slate-200">ONNX Runtime Web · WASM</b>
-          </span>
+          <span className="text-[11px] font-semibold text-slate-300">نموذج التعرّف الصوتي</span>
           <span className="flex items-center gap-1.5 text-[11px] text-slate-300">
             <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} />
             {statusText}
@@ -124,23 +121,23 @@ export default function ModelPanel() {
           className="mt-3 w-full rounded-lg border border-gold-600/50 bg-gold-500/15 py-2 text-sm font-semibold text-gold-200 transition hover:bg-gold-500/25 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {modelStatus === 'ready'
-            ? '✓ النموذج جاهز — يعمل على جهازك'
+            ? '✓ النموذج جاهز — ثمّ عمل دون إنترنت'
             : modelStatus === 'loading'
-              ? 'جارٍ تنزيل النموذج…'
+              ? 'يُنزَّل الآن…'
               : modelStatus === 'error'
-                ? 'إعادة محاولة التحميل'
-                : 'تحميل النموذج (يُخزَّن مؤقتًا في المتصفح)'}
+                ? 'إعادة محاولة التنزيل'
+                : 'تنزيل النموذج (مرة واحدة فقط)'}
         </button>
         {modelMessage && modelStatus === 'error' && (
           <p className="mt-2 text-[10px] leading-relaxed text-danger-300">{modelMessage}</p>
         )}
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-line/60 bg-ink-900/60 p-2.5">
-          <Badge tone="warn" className="mt-0.5 shrink-0">
-            نسخ احتياطية
+          <Badge tone="gold" className="mt-0.5 shrink-0">
+            بلا إنترنت
           </Badge>
           <p className="text-[10px] leading-relaxed text-slate-500">
-            التسلسل: <b className="font-brand text-slate-400">Whisper+انتباه متقاطع ← Whisper+زمنيات ← Energy-DTW</b>. عند أي
-            عطل في WASM/ONNX (بلا شبكة، صلاحيات، موارد) ينقل المحرّك التحليل تلقائيًا إلى المستوى التالي دون انقطاع.
+            بعد أول تنزيل يعمل التطبيق كاملًا دون اتصال بالإنترنت. ولو تعذّر النموذج الذكي استُكمل العمل
+            بتحليلٍ صوتي مبسَّط يبقى قادرًا على كشف مخالفات المدود والغنن.
           </p>
         </div>
       </div>

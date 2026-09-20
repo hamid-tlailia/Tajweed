@@ -25,14 +25,20 @@ export interface SurahData {
   ayahs: Ayah[];
 }
 
+export interface RuleBadge {
+  label: string;
+  tone: 'gold' | 'mint' | 'slate';
+  note?: string; // شرح موجز موثوق للحكم (يظهر في التلميح و«دليل الأحكام»)
+}
+
 export interface WordTajweed {
   word: string;
   syllables: number;
   isMadd: boolean;
-  maddType: string | null; // 'مَدٌّ طَبِيعِي' | 'مَدٌّ وَاجِبٌ مُتَّصِل' | 'مَدٌّ وَاجِبٌ مُنْفَصِل' | 'مَدٌّ تَعْويضي'
+  maddType: string | null; // أول حكم مد مكتشف (للعرض المختصر)
   isGhunna: boolean;
-  ghunnaType: string | null; // 'غُنّة مَدِّية' | 'غُنّة إخفاء' | 'غُنّة إدغام' | 'غُنّة خَفِيّة'
-  rules: { label: string; tone: 'gold' | 'mint' | 'slate' }[]; // all detected rules (display)
+  ghunnaType: string | null; // أول حكم غُنّة مكتشف (للعرض المختصر)
+  rules: RuleBadge[]; // كل الأحكام المكتشفة (مدود أولًا، ثم غُنن، ثم أحكام الحروف)
   expectedMs: number; // model expected duration for tajweed timing
 }
 

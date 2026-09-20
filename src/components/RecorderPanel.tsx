@@ -127,7 +127,7 @@ export default function RecorderPanel() {
     lastInputRef.current = input;
     setHasLastInput(true);
     const target = buildTarget(data, scope, selectedAyah);
-    setProcessing(true, input.demo ? 'محاكاة تلاوة تجريبية…' : 'تحضير العيّنة…');
+    setProcessing(true, input.demo ? 'محاكاة تلاوة للتجربة…' : 'تهيئة الصوت…');
     try {
       const res = await runAlignment(
         input,
@@ -173,13 +173,13 @@ export default function RecorderPanel() {
       recRef.current = null;
       if (!blob || blob.size === 0) return;
       try {
-        setProcessing(true, 'فكّ ترميز العيّنة…');
+        setProcessing(true, 'قراءة التسجيل…');
         const samples = await decodeBlobTo16k(blob);
         const url = URL.createObjectURL(blob);
         void runAnalysis({ samples, url, demo: false });
       } catch {
         setProcessing(false, '');
-        setRecording(false, 'تعذّر فكّ ترميز العيّنة الصوتية');
+        setRecording(false, 'تعذّرت قراءة التسجيل');
       }
     }
   }
@@ -189,13 +189,13 @@ export default function RecorderPanel() {
     e.target.value = '';
     if (!f || processing) return;
     try {
-      setProcessing(true, 'فكّ ترميز الملف…');
+      setProcessing(true, 'قراءة الملف الصوتي…');
       const samples = await decodeBlobTo16k(f);
       const url = URL.createObjectURL(f);
       void runAnalysis({ samples, url, demo: false });
     } catch {
       setProcessing(false, '');
-      setRecording(false, 'تعذّر فكّ ترميز الملف الصوتي');
+      setRecording(false, 'تعذّرت قراءة الملف الصوتي');
     }
   }
 
@@ -215,9 +215,8 @@ export default function RecorderPanel() {
 
   return (
     <Panel
-      title="لوحَة التَّلَفُّظ"
-      subtitle="سجّل تلاوتك — المعالجة كلها على جهازك ولا يُرفع الصوت لأي خادم"
-      latin="Recitation Panel"
+      title="سجّل تلاوتك"
+      subtitle="اقرأ بصوت واضح وبهدوء — يُعالَج صوتك على جهازك ولا يُرفَع إلى الإنترنت أبدًا"
     >
       <div className="flex items-start gap-4">
         <button
@@ -244,7 +243,7 @@ export default function RecorderPanel() {
           </div>
           <canvas ref={canvasRef} className="mt-2 h-20 w-full rounded-lg border border-line bg-ink-950/80" />
           <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-            {micError ?? (recording ? 'أنت الآن داخل الحلقة — سيبدأ التحليل تلقائيًا عند الإيقاف.' : 'الموجة المرسومة حية من الميكروفون عبر WebAudio.')}
+            {micError ?? (recording ? 'يُسجَّل صوتك الآن — اضغط الزر الأحمر عند الانتهاء.' : 'المخطط يعرض صوتك مباشرةً من الميكروفون.')}
           </p>
         </div>
       </div>
@@ -255,10 +254,10 @@ export default function RecorderPanel() {
           <input type="file" accept="audio/*" className="hidden" onChange={(e) => void onFile(e)} disabled={processing} />
         </label>
         <button onClick={onDemo} disabled={processing || !data} className="btn-secondary disabled:opacity-50">
-          <IconWand className="h-4 w-4" /> عرض تجريبي (محاكاة)
+          <IconWand className="h-4 w-4" /> تجربة سريعة (محاكاة)
         </button>
         <button onClick={onRerun} disabled={processing || !hasLastInput} className="btn-secondary col-span-2 disabled:opacity-40">
-          <IconRefresh className="h-4 w-4" /> إعادة تحليل العيّنة الأخيرة بالإعدادات الحالية
+          <IconRefresh className="h-4 w-4" /> إعادة تقييم آخر تسجيل بالإعدادات الحالية
         </button>
       </div>
     </Panel>

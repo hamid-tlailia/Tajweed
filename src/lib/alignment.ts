@@ -48,7 +48,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const words = opts.target.words;
   const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word));
 
-  hooks.stage('معالجة العيّنة الصوتية (16kHz · أحادي)…');
+  hooks.stage('تهيئة الصوت المسجَّل…');
   const energy = energyEnvelope(samples, 40);
 
   let engine: EngineId = 'offline-dtw';
@@ -65,10 +65,10 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       );
       hooks.model?.({ status: 'ready', progress: 1 });
 
-      hooks.stage('التفكيك الصوتي (Whisper · عربي)…');
+      hooks.stage('الاستماع إلى التلاوة…');
       const tsOut = await whisperTranscribeChunked(b, samples, 4, (i, total) =>
         hooks.stage(
-          total > 1 ? `التفكيك الصوتي — المقطع ${i + 1} من ${total}…` : 'التفكيك الصوتي (Whisper)…',
+          total > 1 ? `الاستماع — المقطع ${i + 1} من ${total}…` : 'الاستماع إلى التلاوة…',
         ),
       );
       transcript = tsOut.text;
@@ -79,7 +79,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
 
       // 1) best precision: teacher-forced cross-attention matrix
       if (words.length <= ATTN_MAX_WORDS && durationMs / 1000 <= ATTN_MAX_SEC) {
-        hooks.stage('التراصف القسري: التفكيك المدرَّس + مصفوفة الانتباه المتقاطع…');
+        hooks.stage('مطابقة الكلمات مواضعَ الصوت بدقةٍ عالية…');
         const fa = await whisperForcedAlignment(b, samples, words.map((w) => w.word));
         if (fa) {
           engine = 'whisper-attn';
@@ -88,7 +88,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       }
       // 2) robust path: Whisper's own timestamp tokens matched to the target words
       if (!perWord && tsOut.chunks.length) {
-        hooks.stage('التراصف بزمنيات Whisper (طريق بديل)…');
+        hooks.stage('مطابقة الكلمات مواضعَ الصوت…');
         perWord = timestampsToWords(tsOut.chunks, transcript, tjs);
         if (perWord) engine = 'whisper-ts';
       }
@@ -101,7 +101,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   }
 
   if (!perWord) {
-    hooks.stage('التراصف الطُّرائقي القسري (Energy-DTW)…');
+    hooks.stage('التحليل الصوتي البديل لمطابقة الكلمات…');
     perWord = energyForcedAlignment(tjs, energy, durationMs);
   }
 
