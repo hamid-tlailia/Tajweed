@@ -69,3 +69,25 @@ export function ayahAudioUrls(
     )
     .filter((u) => !u.includes('//quran/audio') || globalAyah != null);
 }
+
+/**
+ * جلب صوت القارئ المعتمد لآية — عبر وسيط خادمنا (/api/reciter/ayah) لا مباشرةً
+ * من الموقع الأصلي، فيعمل التقييم دون مشكلات CORS عند أي مصدر، ولا يُرسَل من
+ * صوت المستخدم شيء (هذه الميزة تنزيلٌ فقط وتحتاج إنترنت).
+ */
+export async function fetchReciterBlob(riwayah: Riwayah, surahId: number, ayahInSurah: number): Promise<Blob> {
+  const q = new URLSearchParams({
+    riwayah,
+    surah: String(surahId),
+    ayah: String(ayahInSurah),
+  });
+  const res = await fetch(`/api/reciter/ayah?${q.toString()}`).catch(() => {
+    throw new Error('OFFLINE');
+  });
+  if (!res.ok) {
+    throw new Error('OFFLINE');
+  }
+  const blob = await res.blob();
+  if (!blob.size) throw new Error('OFFLINE');
+  return blob;
+}

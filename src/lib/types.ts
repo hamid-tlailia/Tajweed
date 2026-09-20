@@ -14,10 +14,75 @@ export type Riwayah = 'hafs' | 'warsh';
  */
 export type Tempo = 'hadr' | 'tadwir' | 'tartil';
 
+/** الوضع اللوني: ليلي (افتراضي) أو نهاري */
+export type ThemeMode = 'night' | 'day';
+
 export type AppTab = 'practice' | 'settings' | 'result' | 'progress';
 
 /** درجة «جيد» فأعلى تُعدّ اجتيازًا للآية ويُفتح ما بعدها */
 export const PASS_SCORE = 70;
+
+/** كلمة في الجلسة الحية: حكمها اللحظي أثناء القراءة */
+export type LiveWordStatus = WordStatus | 'pending' | 'current';
+
+export interface LiveWordResult {
+  index: number;
+  status: WordStatus;
+  measuredMs: number;
+  expectedMs: number;
+}
+
+export interface LiveAlert {
+  index: number;
+  word: string;
+  title: string;
+  action: string;
+  tone: 'warn' | 'danger' | 'mint';
+  at: number;
+}
+
+/** لقطة لحظية للمرافقة الحية تُعرض أثناء التسجيل */
+export interface LiveSnapshot {
+  cursor: number; // فهرس الكلمة الجارية (-1 قبل البدء)
+  started: boolean; // سُمع صوت أول كلمة؟
+  doneCount: number;
+  violations: number;
+  okCount: number;
+  words: { status: LiveWordStatus; measuredMs: number }[];
+  currentVoicedMs: number;
+  currentExpectedMs: number;
+  stalledMs: number; // صمتٌ منذ آخر صوت (بعد البدء)
+  lastAlert: LiveAlert | null;
+  finished: boolean;
+}
+
+/** مقارنة كلمة من تلاوة المستخدم بنظيرتها عند القارئ المعتمد */
+export interface ReciterWordCompare {
+  index: number;
+  word: string;
+  userMs: number;
+  refMs: number;
+  scaledRefMs: number; // زمن القارئ بعد تعديله بسرعة المستخدم
+  sim: number; // 0..1
+}
+
+/** نتيجة التحكيم: مقارنة تلاوة المستخدم بتلاوة القارئ المعتمد */
+export interface ReciterCompare {
+  refLabel: string; // اسم القارئ المرجعي
+  matchPct: number; // 0..100
+  passed: boolean;
+  scale: number; // سرعة المستخدم نسبة إلى القارئ
+  perWord: ReciterWordCompare[];
+  note?: string;
+}
+
+/** أزمنة القارئ المعتمد المخزَّنة مرجعًا لكل آية/رواية/مرتبة */
+export interface RefAlignment {
+  label: string;
+  durationMs: number;
+  score: number; // درجة القارئ على قياس التطبيق نفسه
+  words: { startMs: number; endMs: number }[];
+}
 
 export interface SurahMeta {
   id: number;
@@ -105,6 +170,8 @@ export interface AlignmentResult {
   tips: CoachTip[];
   summary: string;
   passed: boolean;
+  /** التحكيم بالقارئ المعتمد — يُملأ عند توافر مرجعٍ للآية */
+  reciter?: ReciterCompare;
 }
 
 export interface TargetSpec {

@@ -15,7 +15,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`min-w-0 rounded-2xl border border-line/80 bg-ink-900/70 shadow-[0_0_30px_rgba(0,0,0,0.35)] backdrop-blur-sm ${className}`}>
+    <section className={`min-w-0 rounded-2xl border border-line/80 bg-ink-900/70 shadow-panel backdrop-blur-sm ${className}`}>
       <header className="border-b border-line/60 px-5 py-4">
         <h2 className="font-quran text-xl leading-none text-gold-200">{title}</h2>
         {subtitle ? <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">{subtitle}</p> : null}
@@ -168,5 +168,61 @@ export const IconRefresh = ({ className = 'h-5 w-5' }: IconProps) => (
 export const IconWaveEmpty = ({ className = 'h-10 w-28' }: IconProps) => (
   <svg viewBox="0 0 120 40" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className={className}>
     <path d="M4 20h6M16 13v14M26 8v24M36 15v10M46 6v28M56 14v12M66 9v22M76 16v8M86 5v30M96 14v12M106 10v20M116 18v4" />
+  </svg>
+);
+
+/* ---------------- أيقونات شريط التبويب السفلي والثيم ---------------- */
+
+export const IconBookOpen = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M12 6.5C10.4 5 8.3 4.4 5.5 4.4c-.8 0-1.5.6-1.5 1.4v10.7c0 .8.7 1.4 1.5 1.4 2.8 0 4.9.6 6.5 2.1 1.6-1.5 3.7-2.1 6.5-2.1.8 0 1.5-.6 1.5-1.4V5.8c0-.8-.7-1.4-1.5-1.4-2.8 0-4.9.6-6.5 2.1Z" />
+    <path d="M12 6.5v13.5" />
+  </svg>
+);
+
+export const IconSliders = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className={className}>
+    <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+    <circle cx="15" cy="7" r="2.2" />
+    <circle cx="9" cy="17" r="2.2" />
+  </svg>
+);
+
+export const IconPulse = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M2.5 12h4l2.5-6.5 4 13 2.5-6.5h6" />
+  </svg>
+);
+
+export const IconMedal = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="14.5" r="5" />
+    <path d="m9.5 10-3-6.5h11L14.5 10M12 12.3l.9 1.8 2 .3-1.4 1.4.3 2-1.8-1-1.8 1 .3-2-1.4-1.4 2-.3Z" />
+  </svg>
+);
+
+export const IconSun = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className={className}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5 5l1.4 1.4M17.6 17.6 19 19M19 5l-1.4 1.4M6.4 17.6 5 19" />
+  </svg>
+);
+
+export const IconMoon = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M20 13.5A8 8 0 0 1 10.5 4 8 8 0 1 0 20 13.5Z" />
+  </svg>
+);
+
+export const IconShieldCheck = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M12 3 5 5.8v5.4c0 4.4 2.9 7.6 7 9.8 4.1-2.2 7-5.4 7-9.8V5.8L12 3Z" />
+    <path d="m9 11.6 2.2 2.2 4-4.2" />
+  </svg>
+);
+
+export const IconBolt = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="M13 2 4.5 13.5H10L9 22l8.5-11.5H12L13 2Z" />
   </svg>
 );

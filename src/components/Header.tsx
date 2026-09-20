@@ -1,6 +1,7 @@
 'use client';
 
 import { useTahqiq } from '@/store';
+import { IconMoon, IconSun } from './ui';
 
 function LogoMark({ className = 'h-11 w-11 sm:h-12 sm:w-12' }: { className?: string }) {
   return (
@@ -23,6 +24,8 @@ function LogoMark({ className = 'h-11 w-11 sm:h-12 sm:w-12' }: { className?: str
 export default function Header() {
   const modelStatus = useTahqiq((s) => s.modelStatus);
   const modelProgress = useTahqiq((s) => s.modelProgress);
+  const theme = useTahqiq((s) => s.theme);
+  const setTheme = useTahqiq((s) => s.setTheme);
 
   const status =
     modelStatus === 'ready'
@@ -48,10 +51,24 @@ export default function Header() {
             </div>
           </div>
 
-          {/* حالة السماع الذكي — لغة يفهمها كل مستخدم */}
-          <div className="ms-auto flex items-center gap-2.5 rounded-full border border-line bg-ink-900/80 px-3.5 py-2 sm:px-4">
-            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${status.dot}`} />
-            <span className={`truncate text-[11px] sm:text-xs ${status.cls}`}>{status.text}</span>
+          <div className="ms-auto flex items-center gap-2">
+            {/* حالة السماع الذكي — لغة يفهمها كل مستخدم */}
+            <div className="flex items-center gap-2.5 rounded-full border border-line bg-ink-900/80 px-3.5 py-2 sm:px-4">
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${status.dot}`} />
+              <span className={`hidden max-w-[180px] truncate text-[11px] sm:inline sm:text-xs ${status.cls}`}>{status.text}</span>
+            </div>
+
+            {/* مبدّل الثيم: نهاري/ليلي */}
+            <button
+              type="button"
+              onClick={() => setTheme(theme === 'day' ? 'night' : 'day')}
+              title={theme === 'day' ? 'التبديل إلى الثيم الليلي' : 'التبديل إلى الثيم النهاري'}
+              aria-label={theme === 'day' ? 'تفعيل الثيم الليلي' : 'تفعيل الثيم النهاري'}
+              aria-pressed={theme === 'day'}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-ink-900/80 text-gold-400 transition hover:border-gold-500/60 hover:bg-gold-500/10 hover:text-gold-300"
+            >
+              {theme === 'day' ? <IconMoon className="h-5 w-5" /> : <IconSun className="h-5 w-5" />}
+            </button>
           </div>
         </div>
       </div>

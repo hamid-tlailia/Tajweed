@@ -5,7 +5,7 @@ import { energyEnvelope } from '@/lib/audio';
 import { resultPulse, wordViolation } from '@/lib/haptics';
 import { TEMPO_META } from '@/lib/tajweed';
 import { PASS_SCORE } from '@/lib/types';
-import { fmtSec, fmtTime } from '@/lib/util';
+import { fmtSec, fmtTime, waveThemeColors } from '@/lib/util';
 import { useTahqiq } from '@/store';
 import RuleBadges from './RuleBadges';
 import { Badge, IconPause, IconPlay, IconWaveEmpty, Panel, Stat, StatusBadge } from './ui';
@@ -112,13 +112,14 @@ export default function AlignmentConsole() {
     const n = energy.length;
     const bw = w / n;
     const progress = durationMs > 0 ? tMs / durationMs : 0;
+    const wave = waveThemeColors();
     for (let i = 0; i < n; i++) {
       const v = energy[i] / max;
       const bh = Math.max(2, v * (h - 10));
-      ctx.fillStyle = i / n <= progress ? 'rgba(212,175,55,0.9)' : 'rgba(100,116,139,0.28)';
+      ctx.fillStyle = i / n <= progress ? wave.done : wave.todo;
       ctx.fillRect(i * bw, (h - bh) / 2, Math.max(1, bw - 0.6), bh);
     }
-    ctx.fillStyle = 'rgba(241,220,155,0.9)';
+    ctx.fillStyle = wave.playhead;
     ctx.fillRect(Math.max(0, w * progress - 1), 0, 2, h);
   }
 
@@ -235,8 +236,17 @@ export default function AlignmentConsole() {
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <p className={`font-quran text-lg ${result.passed ? 'text-mint-300' : 'text-warn-300'}`}>
-              {result.passed ? 'اجتزت الآية' : 'لم تُجتز بعد'}
-              <span className="ms-2 font-brand text-base">{result.overallScore}%</span>
+              {result.reciter
+                ? result.passed
+                  ? 'اجتزت الآية بمطابقة القارئ المعتمد'
+                  : 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
+                : result.passed
+                  ? 'اجتزت الآية'
+                  : 'لم تُجتز بعد'}
+              <span className="ms-2 font-brand text-base">
+                {result.reciter ? `${result.reciter.matchPct}%` : `${result.overallScore}%`}
+              </span>
+              {result.reciter ? <span className="ms-1.5 font-brand text-xs text-slate-400">(درجتك الذاتية {result.overallScore}%)</span> : null}
             </p>
             <p className="mt-1.5 text-[12px] leading-relaxed text-slate-300">{result.summary}</p>
           </div>
@@ -272,9 +282,65 @@ export default function AlignmentConsole() {
           </p>
         ) : null}
         {!result.passed ? (
-          <p className="mt-3 text-[11px] text-slate-500">حدّ الاجتياز {PASS_SCORE}٪. أعد التلاوة بعد إصلاح الملاحظات أعلاه.</p>
+          <p className="mt-3 text-[11px] text-slate-500">
+            {result.reciter
+              ? `حدّ الاجتياز مطابقة القارئ المعتمد ${PASS_SCORE}٪ (درجتك الذاتية ${result.overallScore}٪). حاذِ أزمنة كلماتك بأزمنته وأعد التلاوة.`
+              : `حدّ الاجتياز ${PASS_SCORE}٪. أعد التلاوة بعد إصلاح الملاحظات أعلاه.`}
+          </p>
         ) : null}
       </div>
+
+      {/* التحكيم: مقارنة بالقارئ المعتمد */}
+      {result.reciter ? (
+        <div className="mb-3 rounded-2xl border border-gold-500/40 bg-gold-500/[0.07] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-quran text-base text-gold-200">
+              المقارنة بالقارئ المعتمد — {result.reciter.refLabel}
+            </h3>
+            <span className="font-brand text-2xl font-bold leading-none text-gold-300">{result.reciter.matchPct}%</span>
+          </div>
+          <p className="mt-1 text-[10.5px] leading-relaxed text-slate-400">
+            قورنت أزمنة كلماتك بأزمنة القارئ بعدلة سرعتك (أنت ≈{result.reciter.scale.toFixed(2)}× من سرعته) — فمن حافظ
+            على نسقه في المدود والغنن والتمطيط طابقه.
+          </p>
+          {result.reciter.note ? (
+            <p className="mt-1.5 rounded-lg border border-warn-500/40 bg-warn-500/10 px-2.5 py-1.5 text-[10.5px] leading-relaxed text-warn-300">
+              {result.reciter.note}
+            </p>
+          ) : null}
+          {(() => {
+            const worst = [...result.reciter!.perWord].filter((p) => p.sim < 0.6).sort((a, b) => a.sim - b.sim).slice(0, 6);
+            if (!worst.length) {
+              return (
+                <p className="mt-2 text-[11px] text-mint-300">
+                  لا مخالفات ظاهرة على نسق القارئ — أزمنتك قريبة من أزمنته في كل الكلمات.
+                </p>
+              );
+            }
+            return (
+              <div className="mt-2.5 space-y-1.5">
+                <p className="text-[10px] text-slate-500">أبعد الكلمات عن نسق القارئ (زمنك ← زمنه بعدلة السرعة):</p>
+                {worst.map((p) => (
+                  <div
+                    key={p.index}
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border border-line/70 bg-ink-900/50 px-2.5 py-1.5"
+                  >
+                    <span className="font-quran text-base text-gold-100">{p.word}</span>
+                    <span className="font-brand text-[10px] text-slate-300" dir="ltr">
+                      {fmtSec(p.userMs)} ← {fmtSec(p.scaledRefMs)}
+                    </span>
+                    <span
+                      className={`font-brand text-[10px] font-semibold ${p.userMs < 70 ? 'text-danger-300' : p.userMs < p.scaledRefMs ? 'text-warn-300' : 'text-warn-300'}`}
+                    >
+                      {p.userMs < 70 ? 'لم تُسمع' : p.userMs < p.scaledRefMs ? 'أقصر من زمن القارئ ↓' : 'أطول من زمن القارئ ↑'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      ) : null}
 
       {/* playback bar */}
       <div className="flex items-center gap-3 rounded-xl border border-line bg-ink-850/70 p-3">

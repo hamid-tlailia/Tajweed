@@ -6,33 +6,27 @@
 import { stripTashkeel } from './tajweed';
 import type { CoachTip, WordAlignment, WordStatus } from './types';
 import { PASS_SCORE } from './types';
+import type { WordTajweed } from './types';
 
 function displayWord(w: string): string {
   return stripTashkeel(w) || w;
 }
 
-function firstMadd(w: WordAlignment): string | null {
-  const r = w.tajweed.rules.find((x) => x.label.includes('مَدّ') || x.label.startsWith('مَدُّ'));
-  return r?.label ?? w.tajweed.maddType;
-}
-
-function firstGhunna(w: WordAlignment): string | null {
-  const r = w.tajweed.rules.find((x) => x.label.includes('غُن'));
-  return r?.label ?? w.tajweed.ghunnaType;
-}
-
-function tipFor(w: WordAlignment): CoachTip | null {
-  const word = displayWord(w.word);
-  const madd = firstMadd(w);
-  const ghunna = firstGhunna(w);
-  const qalqala = w.tajweed.rules.find((x) => x.label.includes('قَلْقَل'));
-  const status: WordStatus = w.status;
+/**
+ * نصيحة موجزة لكلمة بحكمها — تُستخدم في خلاصة التحليل الكامل وفي التنبيه
+ * اللحظي أثناء القراءة الحية (بلا اعتماد على نتيجة محاذاة كاملة).
+ */
+export function liveTip(rawWord: string, tj: WordTajweed, status: WordStatus, index = 0): CoachTip | null {
+  const word = displayWord(rawWord);
+  const madd = tj.rules.find((x) => x.label.includes('مَدّ') || x.label.startsWith('مَدُّ'))?.label ?? tj.maddType;
+  const ghunna = tj.rules.find((x) => x.label.includes('غُن'))?.label ?? tj.ghunnaType;
+  const qalqala = tj.rules.find((x) => x.label.includes('قَلْقَل'))?.label;
 
   if (status === 'excellent' || status === 'ok') return null;
 
   if (status === 'silent') {
     return {
-      index: w.index,
+      index,
       word,
       status,
       title: 'لم تُسمع',
@@ -43,7 +37,7 @@ function tipFor(w: WordAlignment): CoachTip | null {
   if (status === 'short') {
     if (madd) {
       return {
-        index: w.index,
+        index,
         word,
         status,
         title: 'قصّرت المد',
@@ -52,7 +46,7 @@ function tipFor(w: WordAlignment): CoachTip | null {
     }
     if (ghunna) {
       return {
-        index: w.index,
+        index,
         word,
         status,
         title: 'قصّرت الغنّة',
@@ -61,7 +55,7 @@ function tipFor(w: WordAlignment): CoachTip | null {
     }
     if (qalqala) {
       return {
-        index: w.index,
+        index,
         word,
         status,
         title: 'خفّت القلقلة',
@@ -69,7 +63,7 @@ function tipFor(w: WordAlignment): CoachTip | null {
       };
     }
     return {
-      index: w.index,
+      index,
       word,
       status,
       title: 'أسرع من المقدار',
@@ -80,7 +74,7 @@ function tipFor(w: WordAlignment): CoachTip | null {
   // long
   if (madd) {
     return {
-      index: w.index,
+      index,
       word,
       status,
       title: 'أطلت المد',
@@ -89,7 +83,7 @@ function tipFor(w: WordAlignment): CoachTip | null {
   }
   if (ghunna) {
     return {
-      index: w.index,
+      index,
       word,
       status,
       title: 'أطلت الغنّة',
@@ -97,12 +91,16 @@ function tipFor(w: WordAlignment): CoachTip | null {
     };
   }
   return {
-    index: w.index,
+    index,
     word,
     status,
     title: 'أطول من المقدار',
     action: `«${word}» أُطيلت فوق مرتبة قراءتك. خفّف التمطيط قليلًا.`,
   };
+}
+
+function tipFor(w: WordAlignment): CoachTip | null {
+  return liveTip(w.word, w.tajweed, w.status, w.index);
 }
 
 export function buildCoach(

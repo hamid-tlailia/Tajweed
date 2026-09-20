@@ -1,13 +1,16 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { runAlignment } from '@/lib/alignment';
 import { Recorder, decodeBlobTo16k, makeDemoSamples } from '@/lib/audio';
+import { LiveTajweedTracker } from '@/lib/live';
 import { buildTarget } from '@/lib/quran';
 import { analyzeWords } from '@/lib/tajweed';
-import type { ModelEvent } from '@/lib/types';
-import { fmtTime } from '@/lib/util';
+import type { LiveSnapshot, ModelEvent } from '@/lib/types';
+import { fmtTime, waveThemeColors } from '@/lib/util';
+import { wordViolation } from '@/lib/haptics';
 import { useTahqiq } from '@/store';
+import LiveCoach from './LiveCoach';
 import { IconMic, IconRefresh, IconStop, IconUpload, IconWand, Panel } from './ui';
 
 /* ---------- canvas painters ---------- */
@@ -33,7 +36,7 @@ function drawIdle(c: HTMLCanvasElement) {
   const w = c.clientWidth;
   const h = c.clientHeight;
   ctx.clearRect(0, 0, w, h);
-  ctx.strokeStyle = 'rgba(139,150,169,0.28)';
+  ctx.strokeStyle = waveThemeColors().idle;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   for (let x = 0; x <= w; x += 4) {
@@ -50,7 +53,7 @@ function drawLive(c: HTMLCanvasElement, td: Float32Array) {
   const w = c.clientWidth;
   const h = c.clientHeight;
   ctx.clearRect(0, 0, w, h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.strokeStyle = waveThemeColors().center;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, h / 2);
@@ -89,13 +92,19 @@ export default function RecorderPanel() {
   const processing = useTahqiq((s) => s.processing);
   const setProcessing = useTahqiq((s) => s.setProcessing);
   const setResult = useTahqiq((s) => s.setResult);
+  const alertOn = useTahqiq((s) => s.alertOn);
+  const setAlertOn = useTahqiq((s) => s.setAlertOn);
 
   const recRef = useRef<Recorder | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastInputRef = useRef<{ samples: Float32Array; url: string | null; demo: boolean } | null>(null);
   const busyRef = useRef(false);
+  const trackerRef = useRef<LiveTajweedTracker | null>(null);
+  const livePushRef = useRef(0);
   const [elapsed, setElapsed] = useState(0);
   const [hasLastInput, setHasLastInput] = useState(false);
+  const [live, setLive] = useState<LiveSnapshot | null>(null);
+  const liveWords = live ? live : null;
 
   useEffect(() => {
     const c = canvasRef.current;
@@ -117,11 +126,36 @@ export default function RecorderPanel() {
     [],
   );
 
+  // تغيير المقاطع أثناء التسجيل → تُبنى جلسة المرافقة الحية للمقاطع الجديدة
+  const targetKey = `${data?.id ?? 0}:${scope}:${selectedAyah}:${riwayah}:${tempo}`;
+  useEffect(() => {
+    if (recording) startLiveSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetKey]);
+
   const modelHook = (e: ModelEvent) => {
     if (e.status === 'loading') useTahqiq.setState({ modelStatus: 'loading', modelProgress: e.progress ?? 0 });
     else if (e.status === 'ready') useTahqiq.setState({ modelStatus: 'ready', modelProgress: 1, modelMessage: null });
     else if (e.status === 'error') useTahqiq.setState({ modelStatus: 'error', modelMessage: e.message ?? null });
   };
+
+  /** بدء جلسة المرافقة الحية: متتبِّع يحكم كل كلمة لحظة انتهائها */
+  function startLiveSession() {
+    if (!data) return;
+    const target = buildTarget(data, scope, selectedAyah);
+    if (!target.words.length) return;
+    const tjs = analyzeWords(target.words.map((w) => w.word), riwayah, tempo);
+    livePushRef.current = 0;
+    setLive(null);
+    trackerRef.current = new LiveTajweedTracker(tjs, target.words, tau, (e) => {
+      const { alertOn: alerts } = useTahqiq.getState();
+      if (alerts && (e.status === 'short' || e.status === 'long' || e.status === 'silent')) {
+        wordViolation(e.status);
+      }
+      const t = trackerRef.current;
+      if (t) setLive(t.snapshot()); // تحديث فوري عند إقفال كلمة
+    });
+  }
 
   async function runAnalysis(input: { samples: Float32Array; url: string | null; demo: boolean }) {
     if (!data || busyRef.current) return;
@@ -157,20 +191,39 @@ export default function RecorderPanel() {
       r.onWave = (td) => {
         const c = canvasRef.current;
         if (c) drawLive(c, td);
+        // المرافقة الحية: طاقة الإطار تُغذّي المتتبِّع (rms من العيّنة الزمنية)
+        const tracker = trackerRef.current;
+        if (tracker) {
+          let s = 0;
+          for (let i = 0; i < td.length; i++) s += td[i] * td[i];
+          const rms = Math.sqrt(s / td.length);
+          tracker.feed(rms, performance.now());
+          const now = performance.now();
+          if (now - livePushRef.current > 90) {
+            livePushRef.current = now;
+            setLive(tracker.snapshot());
+          }
+        }
       };
       try {
         await r.start();
         r.startWaveLoop();
+        startLiveSession();
         setRecording(true, null);
       } catch {
         setRecording(false, r.micError);
         recRef.current = null;
+        trackerRef.current = null;
       }
     } else {
       const r = recRef.current;
       if (!r) return;
       r.stopWaveLoop();
       setRecording(false, null);
+      trackerRef.current?.finish();
+      const snap = trackerRef.current?.snapshot() ?? null;
+      if (snap) setLive(snap);
+      trackerRef.current = null;
       const blob = await r.stop();
       recRef.current = null;
       if (!blob || blob.size === 0) return;
@@ -215,6 +268,17 @@ export default function RecorderPanel() {
     void runAnalysis(li);
   }
 
+  // كلمات الجلسة الحية (تُبنى عند البدء وتُحفظ للعرض بعد الإيقاف)
+  const liveTarget = useMemo(
+    () => (data ? buildTarget(data, scope, selectedAyah) : null),
+    [data, scope, selectedAyah],
+  );
+  const hasLive = !!liveWords;
+  const liveTjs = useMemo(
+    () => (liveTarget && hasLive ? analyzeWords(liveTarget.words.map((w) => w.word), riwayah, tempo) : []),
+    [liveTarget, hasLive, riwayah, tempo],
+  );
+
   return (
     <Panel
       title="سجّل تلاوتك"
@@ -237,7 +301,11 @@ export default function RecorderPanel() {
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-300">
-              {recording ? 'جارٍ التسجيل… (اضغط للإيقاف)' : processing ? 'جارٍ التحليل…' : 'اضغط لبدء تسجيل التلاوة'}
+              {recording
+                ? 'جارٍ التسجيل… (اضغط للإيقاف) — الكلمات تُضاء مع صوتك بالأسفل'
+                : processing
+                  ? 'جارٍ التحليل…'
+                  : 'اضغط لبدء تسجيل التلاوة'}
             </span>
             <span className="font-brand text-sm font-semibold text-gold-300" dir="ltr">
               {fmtTime(elapsed)}
@@ -262,6 +330,18 @@ export default function RecorderPanel() {
           <IconRefresh className="h-4 w-4" /> إعادة تقييم آخر تسجيل بالإعدادات الحالية
         </button>
       </div>
+
+      {/* المرافقة الحية: أثناء التسجيل وتبقى لمراجعتها بعد الإيقاف */}
+      {liveWords && liveTarget && liveTarget.words.length ? (
+        <LiveCoach
+          snapshot={liveWords}
+          words={liveTarget.words}
+          tjs={liveTjs}
+          recording={recording}
+          alertOn={alertOn}
+          onToggleAlerts={() => setAlertOn(!alertOn)}
+        />
+      ) : null}
     </Panel>
   );
 }

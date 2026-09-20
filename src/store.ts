@@ -1,17 +1,23 @@
 // TAHQĪQ — global app store (zustand)
 
 import { create } from 'zustand';
-import { fetchSurah, fetchSurahs } from '@/lib/quran';
+import { runAlignment } from '@/lib/alignment';
+import { compareWithReciter } from '@/lib/compare';
+import { decodeBlobTo16k } from '@/lib/audio';
+import { fetchSurah, fetchSurahs, buildTarget } from '@/lib/quran';
+import { RECITERS, fetchReciterBlob } from '@/lib/reciter';
 import type {
   AlignmentResult,
   AppTab,
   AyahRecord,
   ModelSize,
   ModelStatus,
+  RefAlignment,
   Riwayah,
   SurahData,
   SurahMeta,
   Tempo,
+  ThemeMode,
 } from '@/lib/types';
 import { PASS_SCORE } from '@/lib/types';
 import { loadWhisper } from '@/lib/whisper';
@@ -20,6 +26,7 @@ const surahCache = new Map<number, SurahData>();
 const fileProgress = new Map<string, number>();
 const PROGRESS_KEY = 'tahqiq-progress-v1';
 const SETTINGS_KEY = 'tahqiq-settings-v1';
+const REF_KEY = 'tahqiq-ref-v1';
 
 function loadProgress(): Record<string, Record<number, AyahRecord>> {
   if (typeof window === 'undefined') return {};
@@ -39,7 +46,11 @@ function saveProgress(p: Record<string, Record<number, AyahRecord>>) {
   }
 }
 
-function loadSettings(): Partial<Pick<TahqiqStore, 'tempo' | 'tau' | 'riwayah' | 'modelSize' | 'alertOn'>> {
+type PersistedSettings = Partial<
+  Pick<TahqiqStore, 'tempo' | 'tau' | 'riwayah' | 'modelSize' | 'alertOn' | 'theme' | 'useReciterGate'>
+>;
+
+function loadSettings(): PersistedSettings {
   if (typeof window === 'undefined') return {};
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -49,12 +60,55 @@ function loadSettings(): Partial<Pick<TahqiqStore, 'tempo' | 'tau' | 'riwayah' |
   }
 }
 
-function saveSettings(s: { tempo: Tempo; tau: number; riwayah: Riwayah; modelSize: ModelSize; alertOn: boolean }) {
+function saveSettings(s: {
+  tempo: Tempo;
+  tau: number;
+  riwayah: Riwayah;
+  modelSize: ModelSize;
+  alertOn: boolean;
+  theme: ThemeMode;
+  useReciterGate: boolean;
+}) {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
   } catch {
     /* quota */
   }
+}
+
+/** مراجع القارئ المعتمد المخزَّنة (أزمنة الكلمات فقط — لا صوت) */
+function loadRefs(): Record<string, RefAlignment> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(REF_KEY);
+    const j = raw ? JSON.parse(raw) : {};
+    return j && typeof j === 'object' ? (j as Record<string, RefAlignment>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveRefs(r: Record<string, RefAlignment>) {
+  try {
+    localStorage.setItem(REF_KEY, JSON.stringify(r));
+  } catch {
+    /* quota */
+  }
+}
+
+/** تطبيق الثيم على عنصر <html> وشريط المتصفح */
+export function applyTheme(mode: ThemeMode) {
+  if (typeof document === 'undefined') return;
+  document.documentElement.classList.toggle('theme-day', mode === 'day');
+  const chrome = mode === 'day' ? '#F4F0E7' : '#070B10';
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', chrome));
+}
+
+interface RefEvalState {
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  key: string; // مفتاح المرجع الجاري/الأخير
+  stage: string;
+  error: string | null;
 }
 
 interface TahqiqStore {
@@ -69,6 +123,7 @@ interface TahqiqStore {
   tempo: Tempo;
   activeTab: AppTab;
   progress: Record<string, Record<number, AyahRecord>>;
+  theme: ThemeMode;
 
   modelSize: ModelSize;
   tau: number;
@@ -84,7 +139,16 @@ interface TahqiqStore {
   activeWord: number;
   alertOn: boolean;
 
+  /** التحكيم بالقارئ المعتمد */
+  refEval: RefEvalState;
+  refCache: Record<string, RefAlignment>;
+  useReciterGate: boolean;
+  evaluateReciter: () => Promise<void>;
+  setUseReciterGate: (b: boolean) => void;
+  refKeyOf: () => string; // مفتاح مرجع الآية/الرواية/المرتبة الحالية
+
   init: () => Promise<void>;
+  setTheme: (t: ThemeMode) => void;
   setAlertOn: (b: boolean) => void;
   selectSurah: (id: number) => void;
   selectAyah: (n: number) => void;
@@ -105,7 +169,15 @@ interface TahqiqStore {
 
 function persistSettings(get: () => TahqiqStore) {
   const s = get();
-  saveSettings({ tempo: s.tempo, tau: s.tau, riwayah: s.riwayah, modelSize: s.modelSize, alertOn: s.alertOn });
+  saveSettings({
+    tempo: s.tempo,
+    tau: s.tau,
+    riwayah: s.riwayah,
+    modelSize: s.modelSize,
+    alertOn: s.alertOn,
+    theme: s.theme,
+    useReciterGate: s.useReciterGate,
+  });
 }
 
 export const useTahqiq = create<TahqiqStore>()((set, get) => ({
@@ -120,6 +192,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   tempo: 'tartil',
   activeTab: 'practice',
   progress: {},
+  theme: 'night',
 
   modelSize: 'tiny',
   tau: 0.8,
@@ -135,22 +208,101 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   activeWord: -1,
   alertOn: true,
 
+  refEval: { status: 'idle', key: '', stage: '', error: null },
+  refCache: {},
+  useReciterGate: true,
+
+  setTheme: (theme) => {
+    set({ theme });
+    applyTheme(theme);
+    persistSettings(get);
+  },
+
+  setUseReciterGate: (useReciterGate) => {
+    set({ useReciterGate });
+    persistSettings(get);
+  },
+
   setAlertOn: (alertOn) => {
     set({ alertOn });
     persistSettings(get);
   },
 
+  refKeyOf: () => `${get().selectedSurahId}:${get().selectedAyah}:${get().riwayah}:${get().tempo}`,
+
+  evaluateReciter: async () => {
+    const { scope, surahCache, selectedSurahId, selectedAyah, riwayah, tempo, tau, modelSize, refEval, refCache } =
+      get();
+    if (refEval.status === 'loading') return;
+    const data = surahCache[selectedSurahId];
+    if (scope !== 'ayah' || !data) return;
+    const key = `${selectedSurahId}:${selectedAyah}:${riwayah}:${tempo}`;
+
+    // مرجع محفوظ سابقًا → جاهز فورًا
+    if (refCache[key]) {
+      set({ refEval: { status: 'ready', key, stage: '', error: null } });
+      return;
+    }
+
+    set({ refEval: { status: 'loading', key, stage: 'جلب صوت القارئ المعتمد…', error: null } });
+    try {
+      const blob = await fetchReciterBlob(riwayah, selectedSurahId, selectedAyah);
+      set({ refEval: { status: 'loading', key, stage: 'فكّ ترميز الصوت…', error: null } });
+      const samples = await decodeBlobTo16k(blob);
+
+      const target = buildTarget(data, 'ayah', selectedAyah);
+      const res = await runAlignment(
+        { samples, url: null, demo: false },
+        { tau, modelSize, target, riwayah, tempo },
+        {
+          stage: (s) => set({ refEval: { status: 'loading', key, stage: s, error: null } }),
+          model: (e) => {
+            if (e.status === 'loading') set({ modelStatus: 'loading', modelProgress: e.progress ?? 0 });
+            else if (e.status === 'ready') set({ modelStatus: 'ready', modelProgress: 1, modelMessage: null });
+          },
+        },
+      );
+
+      const ref: RefAlignment = {
+        label: RECITERS[riwayah].name,
+        durationMs: res.durationMs,
+        score: res.overallScore,
+        words: res.words.map((w) => ({ startMs: w.startMs, endMs: w.endMs })),
+      };
+      const next = { ...get().refCache, [key]: ref };
+      saveRefs(next);
+      set({ refCache: next, refEval: { status: 'ready', key, stage: '', error: null } });
+    } catch (e: any) {
+      set({
+        refEval: {
+          status: 'error',
+          key,
+          stage: '',
+          error:
+            e?.message === 'OFFLINE'
+              ? 'تعذّر جلب صوت القارئ المعتمد — هذه الخطوة تحتاج اتصالًا بالإنترنت (مرة واحدة لكل آية).'
+              : (e?.message ?? 'تعذّر تقييم تلاوة القارئ المعتمد — أعد المحاولة.'),
+        },
+      });
+    }
+  },
+
   init: async () => {
     const saved = loadSettings();
     const progress = loadProgress();
+    const refs = loadRefs();
     set({
       progress,
+      refCache: refs,
       ...(saved.tempo ? { tempo: saved.tempo } : {}),
       ...(typeof saved.tau === 'number' ? { tau: saved.tau } : {}),
       ...(saved.riwayah ? { riwayah: saved.riwayah } : {}),
       ...(saved.modelSize ? { modelSize: saved.modelSize } : {}),
       ...(typeof saved.alertOn === 'boolean' ? { alertOn: saved.alertOn } : {}),
+      ...(saved.theme ? { theme: saved.theme } : {}),
+      ...(typeof saved.useReciterGate === 'boolean' ? { useReciterGate: saved.useReciterGate } : {}),
     });
+    applyTheme(get().theme);
     if (get().surahsStatus === 'ready') return;
     set({ surahsStatus: 'loading' });
     try {
@@ -181,14 +333,14 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
     })();
   },
 
-  selectAyah: (n) => set({ selectedAyah: n, result: null, activeWord: -1 }),
+  selectAyah: (n) => set({ selectedAyah: n, result: null, activeWord: -1, refEval: { status: 'idle', key: '', stage: '', error: null } }),
   setScope: (scope) => set({ scope }),
   setRiwayah: (riwayah) => {
-    set({ riwayah, result: null, activeWord: -1 });
+    set({ riwayah, result: null, activeWord: -1, refEval: { status: 'idle', key: '', stage: '', error: null } });
     persistSettings(get);
   },
   setTempo: (tempo) => {
-    set({ tempo, result: null, activeWord: -1 });
+    set({ tempo, result: null, activeWord: -1, refEval: { status: 'idle', key: '', stage: '', error: null } });
     persistSettings(get);
   },
   setActiveTab: (activeTab) => set({ activeTab }),
@@ -232,22 +384,35 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       set({ result: null, activeWord: -1 });
       return;
     }
-    const { selectedSurahId, selectedAyah, scope, riwayah, progress } = get();
+    const { selectedSurahId, selectedAyah, scope, riwayah, tempo, tau, progress, useReciterGate, refCache } = get();
+
+    // التحكيم بالقارئ المعتمد: إن وُجد مرجعٌ لهذه الآية فتُقارن به تلاوةُ المستخدم،
+    // والمطابقة ≥ حدّ الاجتياز هي التي تُجيز العبور («فإن صحّت جتاز»).
+    let final: AlignmentResult = result;
+    if (!result.demo && scope === 'ayah' && useReciterGate) {
+      const ref = refCache[`${selectedSurahId}:${selectedAyah}:${riwayah}:${tempo}`];
+      if (ref) {
+        const textOk = result.matchSource !== 'transcript' || result.transcriptMatch >= 0.4;
+        const cmp = compareWithReciter(result.words, ref, tau, textOk, ref.label);
+        if (cmp) final = { ...result, reciter: cmp, passed: cmp.passed };
+      }
+    }
+
     let nextProgress = progress;
     if (scope === 'ayah') {
       const key = `${selectedSurahId}:${riwayah}`;
       const prev = progress[key]?.[selectedAyah];
-      const passed = result.overallScore >= PASS_SCORE || !!prev?.passed;
+      const passed = final.passed || !!prev?.passed;
       const rec: AyahRecord = {
-        bestScore: Math.max(prev?.bestScore ?? 0, result.overallScore),
-        lastScore: result.overallScore,
+        bestScore: Math.max(prev?.bestScore ?? 0, final.overallScore),
+        lastScore: final.overallScore,
         passed,
         at: Date.now(),
       };
       nextProgress = { ...progress, [key]: { ...(progress[key] ?? {}), [selectedAyah]: rec } };
       saveProgress(nextProgress);
     }
-    set({ result, activeWord: -1, activeTab: 'result', progress: nextProgress });
+    set({ result: final, activeWord: -1, activeTab: 'result', progress: nextProgress });
   },
 
   advanceAyah: () => {
