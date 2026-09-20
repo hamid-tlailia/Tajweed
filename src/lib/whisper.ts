@@ -80,7 +80,10 @@ export function loadWhisper(
         lastErr = err; // try next CDN
       }
     }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    if (lastErr) console.warn('[tajweed] model load failed:', lastErr);
+    throw new Error(
+      'تعذّر تنزيل نموذج التعرّف الصوتي — تحقّق من اتصال الإنترنت ثم أعد المحاولة؛ وسيستمر التطبيق بتحليلٍ احتياطي مبسَّط في الأثناء',
+    );
   })();
   inflight = { size, p };
   p.catch(() => {
