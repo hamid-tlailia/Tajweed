@@ -450,5 +450,27 @@ console.log('\n════════ 13) تغطية رواية ورش على 
   }
 }
 
+console.log('\n════════ 14) استدراك موثَّق: غُنّة النون المشدَّدة عامة عند كل القراء ════════');
+{
+  // «وَمِن شَرِّ ٱلنَّفَّاثَاتِ فِي ٱلۡعُقَدِ» — نون مشدَّدة، وغُنّتها حكمٌ متَّفقٌ عليه
+  // عند جميع القراء لا خاصّةً بحفص؛ ولا تختصّ برواية دون أخرى.
+  const naffathat = (r: Riwayah) => {
+    const ws = wordsOf(113, 4);
+    const rs = analyzeWords(ws, r);
+    const i = ws.findIndex((w) => bare(w).includes('النفاثات'));
+    return i >= 0 ? rs[i] : null;
+  };
+  const h = naffathat('hafs');
+  const w = naffathat('warsh');
+  check(Boolean(h) && has(h!, 'غُنّة مَدِّية'), 'ٱلنَّفَّاثَاتِ → غُنّة مدِّية (حفص)', h ? rulesOf(h) : '—');
+  check(Boolean(w) && has(w!, 'غُنّة مَدِّية'), 'ٱلنَّفَّاثَاتِ → غُنّة مدِّية (ورش) — الحكم عام', w ? rulesOf(w) : '—');
+  const note = h?.rules.find((r) => r.label === 'غُنّة مَدِّية')?.note ?? '';
+  check(/كل القراء|جميع القراء/.test(note), 'شرح الغُنّة ينصّ على اتفاق القراء جميعًا', note.slice(0, 60) + '…');
+  check(!/عند حفص/.test(note), 'لم يبقَ في شرح الغُنّة قصرُ الحكم على حفص');
+  const ikhfaNote =
+    analyzeWord('مِنۡ', 'فَرَحࣲ', '', 'hafs').rules.find((r) => r.label === 'غُنَّة الإخفاء')?.note ?? '';
+  check(!/عند حفص/.test(ikhfaNote), 'شرح غُنّة الإخفاء أيضًا عامٌّ لا حفصيّ');
+}
+
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURES / ${pass} passed`}`);
 process.exit(fail ? 1 : 0);
