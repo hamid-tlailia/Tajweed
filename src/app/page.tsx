@@ -5,12 +5,14 @@ import AlignmentConsole from '@/components/AlignmentConsole';
 import Header from '@/components/Header';
 import ModelPanel from '@/components/ModelPanel';
 import RecorderPanel from '@/components/RecorderPanel';
+import RiwayahPanel from '@/components/RiwayahPanel';
 import SurahBrowser from '@/components/SurahBrowser';
 import { useTahqiq } from '@/store';
 
 export default function Home() {
   const init = useTahqiq((s) => s.init);
   const surahsStatus = useTahqiq((s) => s.surahsStatus);
+  const riwayah = useTahqiq((s) => s.riwayah);
 
   useEffect(() => {
     void init();
@@ -31,6 +33,7 @@ export default function Home() {
             <SurahBrowser />
             <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
               <div className="min-w-0 space-y-5 xl:sticky xl:top-[86px] xl:self-start">
+                <RiwayahPanel />
                 <ModelPanel />
                 <RecorderPanel />
               </div>
@@ -44,7 +47,8 @@ export default function Home() {
       <footer className="border-t border-line/60 py-5 text-center text-[11px] leading-relaxed text-slate-500">
         <span className="font-quran text-sm text-gold-500">تَحَقُّق</span> · تطبيق مساعد على إتقان التلاوة بالتجويد —
         يحلّل معالجٌ ذكي صوتَك على جهازك دون أن يُرفَع إلى الإنترنت · أداةُ تمرين لا تُغني عن أستاذ التجويد
-        والمُقرئين · نصّ المصحف: رواية حفص — AlQuran Cloud
+        والمُقرئين · نصّ المصحف: الرسم العثماني — AlQuran Cloud · الأحكام: رواية{' '}
+        {riwayah === 'warsh' ? 'ورش عن نافع' : 'حفص عن عاصم'}
       </footer>
     </div>
   );

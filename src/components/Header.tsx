@@ -26,12 +26,12 @@ export default function Header() {
 
   const status =
     modelStatus === 'ready'
-      ? { dot: 'bg-mint-400', text: 'التعرّف الصوتي جاهز', cls: 'text-mint-300' }
+      ? { dot: 'bg-mint-400', text: 'السماع الذكي جاهز', cls: 'text-mint-300' }
       : modelStatus === 'loading'
-        ? { dot: 'bg-warn-400 animate-pulse', text: `يُنزَّل نموذج التعرّف… ${Math.round(modelProgress * 100)}%`, cls: 'text-warn-300' }
+        ? { dot: 'bg-warn-400 animate-pulse', text: `يُجهَّز السماع الذكي… ${Math.round(modelProgress * 100)}%`, cls: 'text-warn-300' }
         : modelStatus === 'error'
-          ? { dot: 'bg-danger-400 animate-pulse', text: 'سيعمل بالتحليل الصوتي البديل', cls: 'text-danger-300' }
-          : { dot: 'bg-slate-500', text: 'لم يُنزَّل نموذج التعرّف بعد', cls: 'text-slate-400' };
+          ? { dot: 'bg-danger-400 animate-pulse', text: 'سيُقيَّم صوتيًّا بلا سماع ذكي', cls: 'text-danger-300' }
+          : { dot: 'bg-slate-500', text: 'السماع الذكي غير مُجهَّز بعد', cls: 'text-slate-400' };
 
   return (
     <header className="sticky top-0 z-40 border-b border-line/70 bg-ink-950/90 backdrop-blur-md">
@@ -48,7 +48,7 @@ export default function Header() {
             </div>
           </div>
 
-          {/* حالة نموذج التعرف — لغة يفهمها كل مستخدم */}
+          {/* حالة السماع الذكي — لغة يفهمها كل مستخدم */}
           <div className="ms-auto flex items-center gap-2.5 rounded-full border border-line bg-ink-900/80 px-3.5 py-2 sm:px-4">
             <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${status.dot}`} />
             <span className={`truncate text-[11px] sm:text-xs ${status.cls}`}>{status.text}</span>

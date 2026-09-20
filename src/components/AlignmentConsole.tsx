@@ -4,15 +4,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { energyEnvelope } from '@/lib/audio';
 import { fmtSec, fmtTime } from '@/lib/util';
 import { useTahqiq } from '@/store';
+import RuleBadges from './RuleBadges';
 import { Badge, IconPause, IconPlay, IconWaveEmpty, Panel, Stat, StatusBadge } from './ui';
 
 const MAX_ROWS = 500;
 
 const ENGINE_LABEL: Record<string, string> = {
-  'whisper-attn': 'النموذج الذكي (تتبّع دقيق لكل كلمة)',
-  'whisper-ts': 'النموذج الذكي (توقيت المقاطع)',
-  'whisper-energy': 'النموذج الذكي + تحليل الصوت',
-  'offline-dtw': 'تحليل الصوت (احتياطي)',
+  'whisper-attn': 'سماع ذكي — يتبع كل كلمة من تلاوتك',
+  'whisper-ts': 'سماع ذكي — يوقّت كلمات تلاوتك',
+  'whisper-energy': 'سماع ذكي مع قياس الصوت',
+  'offline-dtw': 'قياس الصوت مباشرة',
 };
 
 /* ---------- violation alert (vibration + beep) ---------- */
@@ -63,6 +64,7 @@ export default function AlignmentConsole() {
   const setAlertOn = useTahqiq((s) => s.setAlertOn);
 
   const [playing, setPlaying] = useState(false);
+  const [openRow, setOpenRow] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef(0);
@@ -76,6 +78,7 @@ export default function AlignmentConsole() {
     setPlaying(false);
     clockRef.current = null;
     lastIdxRef.current = -1;
+    setOpenRow(null);
     setActiveWord(-1);
   }, [result, setActiveWord]);
 
@@ -220,6 +223,17 @@ export default function AlignmentConsole() {
   const scoreTone = result.overallScore >= 70 ? 'mint' : result.overallScore >= 50 ? 'warn' : 'danger';
   const rows = result.words.slice(0, MAX_ROWS);
 
+  // فهرس شروح الأحكام التي ظهرت في هذه التلاوة (يُفتح باللمس)
+  const glossary = (() => {
+    const seen = new Map<string, { label: string; note: string }>();
+    for (const w of result.words) {
+      for (const r of w.tajweed.rules) {
+        if (r.note && !seen.has(r.label)) seen.set(r.label, { label: r.label, note: r.note });
+      }
+    }
+    return [...seen.values()];
+  })();
+
   return (
     <Panel
       title="نتيجة التلاوة"
@@ -260,7 +274,7 @@ export default function AlignmentConsole() {
       <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <Stat label="الدرجة الكلية" value={`${result.overallScore}%`} tone={scoreTone} sub="يجمع دقةَ النطق وصحةَ المدود والغنن" />
         <Stat
-          label="مطابقة النسخ"
+          label="مطابقة ما قرأته"
           value={`${Math.round(result.transcriptMatch * 100)}%`}
           tone="gold"
           sub="مدى تطابق ما قرأتَه مع الآية"
@@ -292,8 +306,49 @@ export default function AlignmentConsole() {
         </div>
       ) : null}
 
-      {/* word table */}
-      <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-line">
+      {/* بطاقات الكلمات — عرض الجوّال (بلا تمرير أفقي) */}
+      <div className="mt-3 space-y-2 md:hidden">
+        {rows.map((w, i) => {
+          const newAyah = i === 0 || result.words[i].ayah !== result.words[i - 1].ayah;
+          return (
+            <div
+              key={i}
+              className={`rounded-xl border p-3 transition-colors ${
+                activeWord === i ? 'border-gold-500/60 bg-gold-500/10' : 'border-line bg-ink-850/60'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="min-w-0">
+                  <span className="font-quran text-xl leading-tight text-gold-100">{w.word}</span>
+                  {newAyah ? <span className="ms-2 font-brand text-[9px] text-slate-500">آية {w.ayah}</span> : null}
+                </span>
+                <StatusBadge status={w.status} />
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
+                <span className="font-brand" dir="ltr">
+                  {fmtSec(w.startMs)} ← {fmtSec(w.endMs)}
+                </span>
+                <span className="font-brand" dir="ltr">
+                  {fmtSec(w.endMs - w.startMs)} / {fmtSec(w.tajweed.expectedMs)}
+                </span>
+                <span>دقة النطق {Math.round(w.confidence * 100)}%</span>
+                <span className="text-slate-500">كلمة {i + 1} من {result.words.length}</span>
+              </div>
+              <div className="mt-2">
+                <RuleBadges rules={w.tajweed.rules} max={4} />
+              </div>
+            </div>
+          );
+        })}
+        {result.words.length > MAX_ROWS ? (
+          <p className="rounded-lg border border-line bg-ink-850 px-3 py-2 text-center text-[10px] text-slate-500">
+            يُعرض أول {MAX_ROWS} كلمة من أصل {result.words.length} — العيّنة طويلة جدًا؛ يُنصح بتسجيل آيات قصيرة.
+          </p>
+        ) : null}
+      </div>
+
+      {/* word table — الشاشات الواسعة */}
+      <div className="mt-3 hidden max-h-[430px] overflow-auto rounded-xl border border-line md:block">
         <table className="w-full min-w-[680px] border-collapse text-xs">
           <thead className="sticky top-0 z-10">
             <tr className="bg-ink-800 text-slate-400">
@@ -348,22 +403,45 @@ export default function AlignmentConsole() {
                   <StatusBadge status={w.status} />
                 </td>
                 <td className="px-3 py-2">
-                  <span className="flex flex-wrap items-center gap-1">
-                    {w.tajweed.rules.length ? (
-                      w.tajweed.rules.slice(0, 3).map((r, k) => (
-                        <span key={k} title={r.note} className={r.note ? 'cursor-help' : ''}>
+                  {openRow === i ? (
+                    <span className="block space-y-1.5">
+                      {w.tajweed.rules.map((r, k) => (
+                        <span key={k} className="block rounded-lg border border-line bg-ink-900/70 p-2">
                           <Badge tone={r.tone}>{r.label}</Badge>
+                          {r.note ? (
+                            <span className="mt-1 block text-[10px] leading-relaxed text-slate-300">{r.note}</span>
+                          ) : null}
                         </span>
-                      ))
-                    ) : (
-                      <span className="text-slate-600">—</span>
-                    )}
-                    {w.tajweed.rules.length > 3 ? (
-                      <span className="text-[9px] text-slate-600" title={w.tajweed.rules.slice(3).map((r) => r.label).join('، ')}>
-                        +{w.tajweed.rules.length - 3}
-                      </span>
-                    ) : null}
-                  </span>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setOpenRow(null)}
+                        className="text-[10px] text-slate-400 underline decoration-dotted"
+                      >
+                        إغلاق الشرح
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setOpenRow(i)}
+                      className="flex flex-wrap items-center gap-1 text-start"
+                      aria-label="إظهار شرح الأحكام"
+                    >
+                      {w.tajweed.rules.length ? (
+                        w.tajweed.rules.slice(0, 3).map((r, k) => (
+                          <Badge key={k} tone={r.tone}>
+                            {r.label}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                      {w.tajweed.rules.length > 3 ? (
+                        <span className="text-[9px] text-slate-500">+{w.tajweed.rules.length - 3}</span>
+                      ) : null}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -375,6 +453,26 @@ export default function AlignmentConsole() {
           </div>
         ) : null}
       </div>
+
+      {/* دليل الأحكام — يُفتح بلمسة، ويجمع كل حكم ظهر في تلاوتك */}
+      {glossary.length ? (
+        <details className="mt-3 rounded-xl border border-line bg-ink-850/50">
+          <summary className="cursor-pointer list-none px-3.5 py-3 text-[11px] font-semibold text-gold-200">
+            دليل الأحكام في هذه التلاوة
+            <span className="ms-2 text-[10px] font-normal text-slate-500">
+              ({glossary.length} حكمًا — اضغط ليُفتح)
+            </span>
+          </summary>
+          <div className="space-y-2 border-t border-line/60 p-3.5">
+            {glossary.map((g) => (
+              <div key={g.label} className="rounded-lg border border-line/70 bg-ink-900/60 p-2.5">
+                <span className="text-[11px] font-semibold text-gold-200">{g.label}</span>
+                <p className="mt-1 text-[10px] leading-relaxed text-slate-300">{g.note}</p>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </Panel>
   );
 }

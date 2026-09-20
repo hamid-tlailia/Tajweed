@@ -27,12 +27,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-title" content="تحقيق" />
         <meta name="theme-color" content="#070B10" />
         <meta name="description" content="تطبيق التدريب على تجويد التلاوة — يعمل على جهازك دون رفع صوتك إلى الإنترنت" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700&family=Amiri+Quran&family=Cairo:wght@300;400;600;700;800&display=swap"
-          rel="stylesheet"
-        />
+        {/* الخطوط محلية بالكامل: لا يُطلب أي خطٍّ من الشبكة (بلا Google Fonts)،
+            فيعمل التطبيق كاملًا دون إنترنت ولا يُرسَل أي طلب خارجي عند الفتح. */}
       </head>
       <body className="min-h-screen overflow-x-clip bg-ink-950 font-sans text-slate-100 antialiased">
         <PWARegister />
