@@ -3,10 +3,10 @@ import type { MetadataRoute } from 'next';
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: '/',
-    name: 'تحقيق · TAHQĪQ — محرِّك التحقق من التلاوة',
-    short_name: 'تحقيق',
+    name: 'تَحَقُّق — تدريب التلاوة بالتجويد',
+    short_name: 'تَحَقُّق',
     description:
-      'منصّة التحقق من التلاوة القرآنية — Whisper (WASM/ONNX) على جهازك، تراصف قسري وتقييم أزمنة المدود والغنن',
+      'سجّل تلاوتك واقرأ حكمها كلمةً كلمة: المدود والغنن وأحكام التجويد — صوتك يُعالَج على جهازك ولا يُرفَع إلى الإنترنت',
     start_url: '/',
     scope: '/',
     display: 'standalone',

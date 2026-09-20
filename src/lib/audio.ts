@@ -23,8 +23,8 @@ export class Recorder {
     } catch (e: any) {
       this.micError =
         e?.name === 'NotAllowedError'
-          ? 'تم رفض إذن الميكروفون — استعمل «رفع ملفّ صوتي» أو «العرض التجريبي».'
-          : 'الميكروفون غير متوفّر في هذه البيئة — استعمل «رفع ملفّ صوتي» أو «العرض التجريبي».';
+          ? 'تم رفض إذن الميكروفون — استعمل «رفع ملفّ صوتي» أو «تجربة سريعة».'
+          : 'الميكروفون غير متوفّر في هذه البيئة — استعمل «رفع ملفّ صوتي» أو «تجربة سريعة».';
       throw new Error('MIC_UNAVAILABLE');
     }
     const AC: typeof AudioContext = window.AudioContext || (window as any).webkitAudioContext;
