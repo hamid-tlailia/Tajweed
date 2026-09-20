@@ -7,6 +7,18 @@ export type ModelStatus = 'idle' | 'loading' | 'ready' | 'error';
 /** الرواية المقروء بها — لكل رواية أصولُها في المدود والهمز والإمالة */
 export type Riwayah = 'hafs' | 'warsh';
 
+/**
+ * مراتب القراءة الثلاثة المعروفة عند أهل الأداء (النشر لابن الجزري):
+ * الترتيل أتمّها بيانًا، ثم التدوير، ثم الحدر أسرعها مع بقاء الأحكام.
+ * تتغيّر مدة الحركة لا عدد الحركات.
+ */
+export type Tempo = 'hadr' | 'tadwir' | 'tartil';
+
+export type AppTab = 'practice' | 'settings' | 'result' | 'progress';
+
+/** درجة «جيد» فأعلى تُعدّ اجتيازًا للآية ويُفتح ما بعدها */
+export const PASS_SCORE = 70;
+
 export interface SurahMeta {
   id: number;
   name: string;
@@ -58,12 +70,28 @@ export interface WordAlignment {
   tajweed: WordTajweed;
 }
 
+export interface CoachTip {
+  index: number;
+  word: string;
+  status: WordStatus;
+  title: string;
+  action: string;
+}
+
+export interface AyahRecord {
+  bestScore: number;
+  lastScore: number;
+  passed: boolean;
+  at: number;
+}
+
 export interface AlignmentResult {
   targetKey: string;
   targetLabel: string;
   engine: EngineId;
   transcript: string;
   transcriptMatch: number; // 0..1 — captured target words ratio
+  matchSource: 'transcript' | 'coverage' | 'demo';
   predWords: { word: string; ok: boolean }[];
   overallScore: number; // 0..100
   verdict: string;
@@ -73,6 +101,10 @@ export interface AlignmentResult {
   createdAt: number;
   audioUrl: string | null;
   samples: Float32Array | null;
+  tempo: Tempo;
+  tips: CoachTip[];
+  summary: string;
+  passed: boolean;
 }
 
 export interface TargetSpec {

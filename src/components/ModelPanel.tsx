@@ -1,8 +1,11 @@
 'use client';
 
-import type { ModelSize } from '@/lib/types';
+import { TEMPO_META } from '@/lib/tajweed';
+import type { ModelSize, Tempo } from '@/lib/types';
 import { useTahqiq } from '@/store';
 import { Badge, Panel } from './ui';
+
+const TEMPOS: Tempo[] = ['hadr', 'tadwir', 'tartil'];
 
 const SIZES: { id: ModelSize; label: string; size: string; hint: string }[] = [
   { id: 'tiny', label: 'سريعة', size: '٤٣ م.ب', hint: 'تنزيل أخفّ — تكفي للتدريب اليومي' },
@@ -14,6 +17,8 @@ export default function ModelPanel() {
   const setModelSize = useTahqiq((s) => s.setModelSize);
   const tau = useTahqiq((s) => s.tau);
   const setTau = useTahqiq((s) => s.setTau);
+  const tempo = useTahqiq((s) => s.tempo);
+  const setTempo = useTahqiq((s) => s.setTempo);
   const modelStatus = useTahqiq((s) => s.modelStatus);
   const modelProgress = useTahqiq((s) => s.modelProgress);
   const modelMessage = useTahqiq((s) => s.modelMessage);
@@ -39,8 +44,34 @@ export default function ModelPanel() {
   return (
     <Panel
       title="إعدادات التقييم"
-      subtitle="اختر دقة السماع ومدى صرامة الحكم على نطقك"
+      subtitle="اختر مرتبة قراءتك ودقة السماع ومدى صرامة الحكم على نطقك"
     >
+      <div className="mb-5">
+        <p className="mb-2 text-xs font-semibold text-slate-200">مرتبة القراءة</p>
+        <div className="grid grid-cols-3 gap-2">
+          {TEMPOS.map((id) => {
+            const meta = TEMPO_META[id];
+            const sel = tempo === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTempo(id)}
+                className={`rounded-xl border p-2.5 text-start transition ${
+                  sel ? 'border-gold-500/70 bg-gold-500/10 shadow-[0_0_14px_rgba(212,175,55,0.15)]' : 'border-line bg-ink-850/60 hover:border-gold-600/40'
+                }`}
+              >
+                <span className={`block text-sm font-semibold ${sel ? 'text-gold-200' : 'text-slate-200'}`}>{meta.label}</span>
+                <span className="mt-1 block text-[10px] leading-snug text-slate-500">{meta.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+          عدد حركات المدّ والغنّة لا يتغيّر؛ تتغيّر مدة الحركة فقط. إن قرأت بالحدر فلا تُحاكَم بأزمنة الترتيل.
+        </p>
+      </div>
+
       {/* دقة النموذج */}
       <div className="grid grid-cols-2 gap-2.5">
         {SIZES.map((sz) => {

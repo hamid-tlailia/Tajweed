@@ -6,6 +6,8 @@
 //   3. offline-dtw    — pure in-browser energy/DTW-style forced alignment (no AI, always works)
 
 import { energyEnvelope } from './audio';
+import { buildCoach } from './coach';
+import { scoreTranscriptMatch } from './match';
 import { targetTextOf } from './quran';
 import { analyzeWords, classifyWord, normalizeArabic, tajweedScore, verdictFor } from './tajweed';
 import type {
@@ -15,6 +17,7 @@ import type {
   ModelSize,
   Riwayah,
   TargetSpec,
+  Tempo,
   WordAlignment,
   WordTajweed,
 } from './types';
@@ -33,6 +36,7 @@ export interface AlignOpts {
   modelSize: ModelSize;
   target: TargetSpec;
   riwayah: Riwayah;
+  tempo: Tempo;
 }
 
 export interface AlignHooks {
@@ -48,7 +52,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const samples = input.samples;
   const durationMs = (samples.length / sr) * 1000;
   const words = opts.target.words;
-  const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word), opts.riwayah);
+  const tempo = opts.tempo ?? 'tartil';
+  const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word), opts.riwayah, tempo);
 
   hooks.stage('تهيئة الصوت المسجَّل…');
   const energy = energyEnvelope(samples, 40);
@@ -57,6 +62,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   let perWord: { midMs: number; conf: number }[] | null = null;
   let transcript = '';
   let transcriptMatch = 0;
+  let matchSource: AlignmentResult['matchSource'] = 'coverage';
   let predWords: { word: string; ok: boolean }[] = [];
 
   if (!input.demo) {
@@ -75,9 +81,10 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       );
       transcript = tsOut.text;
       const targetNorm = targetTextOf(opts.target);
-      const [match, pred] = similarity(transcript, targetNorm);
-      transcriptMatch = match;
-      predWords = pred;
+      const scored = scoreTranscriptMatch(transcript, targetNorm);
+      transcriptMatch = scored.match;
+      predWords = scored.predWords;
+      if (!scored.empty) matchSource = 'transcript';
 
       // 1) best precision: teacher-forced cross-attention matrix
       if (words.length <= ATTN_MAX_WORDS && durationMs / 1000 <= ATTN_MAX_SEC) {
@@ -136,7 +143,24 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
 
   const meanConf = mean(alignWords.map((w) => w.confidence));
   const meanTj = mean(alignWords.map((w) => tajweedScore(w.endMs - w.startMs, w.tajweed.expectedMs, opts.tau)));
-  const overallScore = Math.round(100 * (0.5 * meanConf + 0.5 * meanTj));
+  const voiced = alignWords.length ? alignWords.filter((w) => w.status !== 'silent').length / alignWords.length : 0;
+
+  if (input.demo) {
+    transcriptMatch = 1;
+    matchSource = 'demo';
+    predWords = words.map((w) => ({ word: normalizeArabic(w.word), ok: true }));
+  } else if (matchSource !== 'transcript') {
+    transcriptMatch = voiced;
+    matchSource = 'coverage';
+  } else if (transcriptMatch < 0.12 && voiced > 0.5) {
+    // النصّ المسموع فارغ المعنى رغم وجود صوت — لا نعرض 0٪ مضلِّلة
+    transcriptMatch = Math.max(transcriptMatch, voiced * 0.65);
+    matchSource = 'coverage';
+  }
+
+  const asrOk = matchSource === 'transcript' && transcriptMatch >= 0.25;
+  const overallScore = Math.round(100 * (asrOk ? 0.4 * meanConf + 0.6 * meanTj : 0.2 * meanConf + 0.8 * meanTj));
+  const coach = buildCoach(alignWords, overallScore, transcriptMatch, matchSource);
 
   return {
     targetKey: opts.target.key,
@@ -144,6 +168,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     engine,
     transcript,
     transcriptMatch,
+    matchSource,
     predWords,
     overallScore,
     verdict: verdictFor(overallScore),
@@ -153,6 +178,10 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     createdAt: Date.now(),
     audioUrl: input.url ?? null,
     samples,
+    tempo,
+    tips: coach.tips,
+    summary: coach.summary,
+    passed: coach.passed,
   };
 }
 
@@ -223,60 +252,6 @@ function computeWordSpans(
     out[out.length - 1].endMs = Math.min(durationMs, Math.max(out[out.length - 1].endMs, out[out.length - 1].startMs + 80));
   }
   return out;
-}
-
-/* ------------------------------------------------------------------ */
-
-/** Word-level LCS similarity between model transcript and target text */
-function similarity(pred: string, target: string): [number, { word: string; ok: boolean }[]] {
-  const p = pred
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(normalizeArabic)
-    .filter(Boolean);
-  const t = target
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(normalizeArabic)
-    .filter(Boolean);
-  if (!t.length) return [0, p.map((w) => ({ word: w, ok: false }))];
-  if (!p.length) return [0, []];
-
-  const n = p.length;
-  const m = t.length;
-  if (n * m > 4_000_000) {
-    // huge targets: multiset-overlap approximation
-    const counts = new Map<string, number>();
-    for (const w of p) counts.set(w, (counts.get(w) ?? 0) + 1);
-    let matches = 0;
-    for (const w of t) {
-      const c = counts.get(w) ?? 0;
-      if (c > 0) {
-        matches++;
-        counts.set(w, c - 1);
-      }
-    }
-    return [matches / m, p.map((w) => ({ word: w, ok: false }))];
-  }
-
-  const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = p[i] === t[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
-  let i = 0;
-  let j = 0;
-  const ok = new Array<boolean>(n).fill(false);
-  while (i < n && j < m) {
-    if (p[i] === t[j]) {
-      ok[i] = true;
-      i++;
-      j++;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
-    else j++;
-  }
-  return [dp[0][0] / m, p.map((w, k) => ({ word: w, ok: ok[k] }))];
 }
 
 /* ------------------------------------------------------------------ */
