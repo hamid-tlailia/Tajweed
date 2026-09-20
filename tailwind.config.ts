@@ -13,46 +13,64 @@ const LOCAL_UI_STACK = [
   'sans-serif',
 ];
 
+/**
+ * الثيمات (ليلي/نهاري): كل الألوان متغيّرات CSS تُعرَّف قيمها في globals.css
+ * (‏:root لليلي و html.theme-day للنهاري) — فتتبدّل الواجهة كلها بتبديل صنفٍ
+ * واحد على عنصر <html> دون أي إعادة بناء، وتعمل الشفافيات (/70 وغيرها) كما هي.
+ */
+const varColor = (name: string) => `rgb(var(${name}) / <alpha-value>)`;
+
 const config: Config = {
   content: ['./src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
         ink: {
-          950: '#070B10',
-          900: '#0B1017',
-          850: '#0E141D',
-          800: '#121A25',
-          750: '#16202E',
-          700: '#1B2637',
-          600: '#24304A',
+          950: varColor('--c-ink-950'),
+          900: varColor('--c-ink-900'),
+          850: varColor('--c-ink-850'),
+          800: varColor('--c-ink-800'),
+          750: varColor('--c-ink-750'),
+          700: varColor('--c-ink-700'),
+          600: varColor('--c-ink-600'),
         },
-        line: '#20304A',
+        line: varColor('--c-line'),
         gold: {
-          100: '#FBF3DC',
-          200: '#F7EBC4',
-          300: '#F1DC9B',
-          400: '#E8C766',
-          500: '#D4AF37',
-          600: '#B08D1F',
-          700: '#8A6D14',
+          100: varColor('--c-gold-100'),
+          200: varColor('--c-gold-200'),
+          300: varColor('--c-gold-300'),
+          400: varColor('--c-gold-400'),
+          500: varColor('--c-gold-500'),
+          600: varColor('--c-gold-600'),
+          700: varColor('--c-gold-700'),
         },
         mint: {
-          300: '#6EE7B7',
-          400: '#34D399',
-          500: '#10B981',
-          600: '#059669',
+          100: varColor('--c-mint-100'),
+          200: varColor('--c-mint-200'),
+          300: varColor('--c-mint-300'),
+          400: varColor('--c-mint-400'),
+          500: varColor('--c-mint-500'),
+          600: varColor('--c-mint-600'),
         },
         warn: {
-          300: '#FCD34D',
-          400: '#FBBF24',
-          500: '#F59E0B',
+          300: varColor('--c-warn-300'),
+          400: varColor('--c-warn-400'),
+          500: varColor('--c-warn-500'),
         },
         danger: {
-          300: '#FDA4AF',
-          400: '#FB7185',
-          500: '#F43F5E',
-          600: '#E11D48',
+          300: varColor('--c-danger-300'),
+          400: varColor('--c-danger-400'),
+          500: varColor('--c-danger-500'),
+          600: varColor('--c-danger-600'),
+        },
+        slate: {
+          50: varColor('--c-slate-50'),
+          100: varColor('--c-slate-100'),
+          200: varColor('--c-slate-200'),
+          300: varColor('--c-slate-300'),
+          400: varColor('--c-slate-400'),
+          500: varColor('--c-slate-500'),
+          600: varColor('--c-slate-600'),
         },
       },
       // خطوط محلية من الجهاز نفسه — لا تُحمَّل أي خطوط من الإنترنت.
@@ -77,6 +95,8 @@ const config: Config = {
       boxShadow: {
         glow: '0 0 24px rgba(212,175,55,0.18)',
         'glow-sm': '0 0 12px rgba(212,175,55,0.14)',
+        panel: 'var(--shadow-panel)',
+        dock: 'var(--shadow-dock)',
       },
     },
   },

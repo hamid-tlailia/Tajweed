@@ -5,6 +5,7 @@ import AlignmentConsole from '@/components/AlignmentConsole';
 import Header from '@/components/Header';
 import ModelPanel from '@/components/ModelPanel';
 import ProgressPanel from '@/components/ProgressPanel';
+import ReciterGate from '@/components/ReciterGate';
 import RecorderPanel from '@/components/RecorderPanel';
 import RiwayahPanel from '@/components/RiwayahPanel';
 import SurahBrowser from '@/components/SurahBrowser';
@@ -25,7 +26,6 @@ export default function Home() {
     <div className="min-h-screen overflow-x-clip">
       <div className="sticky top-0 z-40">
         <Header />
-        {surahsStatus !== 'error' ? <TabBar /> : null}
       </div>
       <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-5">
         {surahsStatus === 'error' ? (
@@ -39,6 +39,7 @@ export default function Home() {
             {activeTab === 'practice' ? (
               <div className="space-y-5">
                 <SurahBrowser />
+                <ReciterGate />
                 <RecorderPanel />
               </div>
             ) : null}
@@ -53,11 +54,16 @@ export default function Home() {
           </>
         )}
       </main>
-      <footer className="border-t border-line/60 py-5 text-center text-[11px] leading-relaxed text-slate-500">
+      <footer
+        className="border-t border-line/60 py-5 text-center text-[11px] leading-relaxed text-slate-500"
+        style={{ paddingBottom: 'calc(92px + env(safe-area-inset-bottom, 0px))' }}
+      >
         <span className="font-quran text-sm text-gold-500">تَحَقُّق</span> · تطبيق مساعد على إتقان التلاوة بالتجويد —
         يحلّل معالجٌ ذكي صوتَك على جهازك دون أن يُرفَع إلى الإنترنت · أداةُ تمرين لا تُغني عن أستاذ التجويد والمُقرئين ·
         نصّ المصحف: الرسم العثماني — AlQuran Cloud · الأحكام: رواية {riwayah === 'warsh' ? 'ورش عن نافع' : 'حفص عن عاصم'}
       </footer>
+      {/* شريط التبويب السفلي — فوتر الملاحة الثابت */}
+      {surahsStatus !== 'error' ? <TabBar /> : null}
     </div>
   );
 }

@@ -1,0 +1,80 @@
+// TAHQĪQ — التحكيم: مقارنة تلاوة المستخدم بتلاوة القارئ المعتمد
+//
+// لا تُقارن المدد الخامّ مباشرةً؛ فللقارئ سرعته ومرتبته. بل تُضبط أزمنة القارئ
+// بمعامل سرعةٍ واحد (وسيط نسب المستخدم/القارئ على كل الكلمات — وسيطٌ صامد أمام
+// الكلمات الشاذّة)، ثم تُقاس كل كلمة على حدة: من حافظ على نسق القارئ في المدود
+// والغنن والتمطيط طابقَه، ومن خالف في كلمةٍ ظهرت مخالفته في كلمتها.
+//
+// فإن بلغت المطابقة حدّ الاجتياز (٧٠٪) جازت الآية — وهذا هو «التحكيم»:
+// قياسٌ إلى صوتٍ معتمدٍ لا إلى نموذجٍ نظري وحده.
+
+import { tauTolerance } from './tajweed';
+import type { RefAlignment, ReciterCompare, ReciterWordCompare, WordAlignment } from './types';
+import { PASS_SCORE } from './types';
+import { clamp, mean } from './util';
+
+function median(vals: number[]): number {
+  if (!vals.length) return 0;
+  const s = [...vals].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/**
+ * @param userWords كلمات تلاوة المستخدم (من محاذاة التسجيل)
+ * @param ref       أزمنة القارئ المعتمد للآية نفسها
+ * @param tau       عتبة الصرامة (نفس المستعملة في تصنيف الكلمات)
+ * @param textOk    هل النصّ المسموع من المستخدم قريب من الآية؟ (بوابة نصّية)
+ */
+export function compareWithReciter(
+  userWords: WordAlignment[],
+  ref: RefAlignment,
+  tau: number,
+  textOk: boolean,
+  refLabel?: string,
+): ReciterCompare | null {
+  if (!userWords.length || userWords.length !== ref.words.length) return null;
+
+  const tol = tauTolerance(tau);
+
+  // ١) معامل السرعة: وسيط نسب مدد الكلمات (صامد أمام الكلمات الشاذّة)
+  const ratios = userWords.map((w, i) => {
+    const u = Math.max(0, w.endMs - w.startMs);
+    const r = Math.max(80, ref.words[i].endMs - ref.words[i].startMs);
+    return u / r;
+  });
+  const scale = clamp(median(ratios.filter((x) => Number.isFinite(x) && x > 0.05)) || 1, 0.25, 4);
+
+  // ٢) تشابه كل كلمة بعد ضبط سرعة القارئ
+  const perWord: ReciterWordCompare[] = userWords.map((w, i) => {
+    const userMs = Math.max(0, w.endMs - w.startMs);
+    const refMs = Math.max(80, ref.words[i].endMs - ref.words[i].startMs);
+    const scaledRefMs = refMs * scale;
+    if (userMs < 70) {
+      return { index: i, word: w.word, userMs, refMs, scaledRefMs, sim: 0.05 };
+    }
+    const r = userMs / scaledRefMs;
+    const sim = clamp(1 - Math.abs(r - 1) / (2 * tol), 0, 1);
+    return { index: i, word: w.word, userMs, refMs, scaledRefMs, sim };
+  });
+
+  let matchPct = Math.round(100 * mean(perWord.map((p) => p.sim)));
+  let note: string | undefined;
+
+  if (!textOk) {
+    // ما سُمع من الألفاظ بعيد عن الآية — لا يُجيز التوقيتُ وحده
+    matchPct = Math.min(matchPct, 45);
+    note = 'ما سُمع من الألفاظ ابتعد عن نصّ الآية، فخُفّضت المطابقة — تأكّد أنك تقرأ الآية المختارة.';
+  } else if (scale < 0.55 || scale > 1.9) {
+    note = `سرعتك بعيدة عن سرعة القارئ (≈${scale.toFixed(2)}×) — قُورنت الأزمنة بعدلة السرعة، ويُستحسن الاقتراب من مرتبته.`;
+  }
+
+  return {
+    refLabel: refLabel ?? ref.label,
+    matchPct,
+    passed: matchPct >= PASS_SCORE,
+    scale,
+    perWord,
+    note,
+  };
+}
