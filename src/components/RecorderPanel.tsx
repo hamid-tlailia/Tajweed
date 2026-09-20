@@ -80,6 +80,7 @@ export default function RecorderPanel() {
   const scope = useTahqiq((s) => s.scope);
   const selectedAyah = useTahqiq((s) => s.selectedAyah);
   const riwayah = useTahqiq((s) => s.riwayah);
+  const tempo = useTahqiq((s) => s.tempo);
   const modelSize = useTahqiq((s) => s.modelSize);
   const tau = useTahqiq((s) => s.tau);
   const recording = useTahqiq((s) => s.recording);
@@ -132,7 +133,7 @@ export default function RecorderPanel() {
     try {
       const res = await runAlignment(
         input,
-        { tau, modelSize, target, riwayah },
+        { tau, modelSize, target, riwayah, tempo },
         {
           stage: (s) => setProcessing(true, s),
           model: modelHook,

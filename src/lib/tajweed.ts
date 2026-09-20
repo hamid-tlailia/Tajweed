@@ -23,8 +23,21 @@
 //   التفخيم الذاتي لحروف الاستعلاء (خصّ ضغطٍ قِظْ)
 // ويستنتج «الزمن النموذجي» لكل كلمة لمقارنته بالمُقاس وفق عتبة السماح τ.
 
-import type { Riwayah, RuleBadge, WordStatus, WordTajweed } from './types';
+import type { Riwayah, RuleBadge, Tempo, WordStatus, WordTajweed } from './types';
 import { clamp } from './util';
+
+/** مقياس زمن الحركة بحسب مرتبة القراءة — عدد حركات المدّ ثابت */
+export const TEMPO_SCALE: Record<Tempo, number> = {
+  hadr: 0.55,
+  tadwir: 0.76,
+  tartil: 1,
+};
+
+export const TEMPO_META: Record<Tempo, { label: string; hint: string }> = {
+  hadr: { label: 'حدْر', hint: 'قراءة سريعة مع إتمام الأحكام — مناسبة للحفظ والمراجعة' },
+  tadwir: { label: 'تدوير', hint: 'بين الحدر والترتيل — المرتبة الوسطى عند أهل الأداء' },
+  tartil: { label: 'ترتيل', hint: 'قراءة متأنّية للتعليم؛ أوضح المدود والغنن' },
+};
 
 /* ------------------------------------------------------------------ */
 /* الحركات والمحارف (مدروسة على الرسم العثماني)                        */
@@ -399,9 +412,9 @@ function raRule(toks: Tok[]): RuleBadge | null {
 /* ------------------------------------------------------------------ */
 
 /** تحليل متسلسل: يُمرَّر سياق السابقة والتالية لكل كلمة */
-export function analyzeWords(words: string[], riwayah: Riwayah = 'hafs'): WordTajweed[] {
+export function analyzeWords(words: string[], riwayah: Riwayah = 'hafs', tempo: Tempo = 'tartil'): WordTajweed[] {
   return words.map((raw, i) =>
-    analyzeWord(raw, i + 1 < words.length ? words[i + 1] : '', i > 0 ? words[i - 1] : '', riwayah),
+    analyzeWord(raw, i + 1 < words.length ? words[i + 1] : '', i > 0 ? words[i - 1] : '', riwayah, tempo),
   );
 }
 
@@ -410,6 +423,7 @@ export function analyzeWord(
   nextWord = '',
   prevWord = '',
   riwayah: Riwayah = 'hafs',
+  tempo: Tempo = 'tartil',
 ): WordTajweed {
   const word = raw;
   const p = MADD_PROFILE[riwayah];
@@ -647,9 +661,11 @@ export function analyzeWord(
     const t0 = toks[pos];
     const l0 = toks[pos + 1];
     const follow = toks[pos + 2];
-    if (t0 && (t0.ch === 'ا' || t0.ch === '\u0671') && l0 && l0.ch === 'ل' && !l0.sh && isSukun(l0) && follow) {
-      if (QAMARIYYA.has(follow.ch)) otherBadges.push({ label: 'لاَم قَمَريّة', tone: 'slate', note: NOTE_LAM_QAMAR });
-      else if (follow.ch) otherBadges.push({ label: 'لاَم شمسيّة', tone: 'slate', note: NOTE_LAM_SHAMS });
+    if (t0 && (t0.ch === 'ا' || t0.ch === '\u0671') && l0 && l0.ch === 'ل' && follow?.ch) {
+      // الشمسية في رسم المصحف: الحرف بعد اللام مشدَّد (ٱلنَّاس) ولو لم يُرسم سكون على اللام
+      if (follow.sh) otherBadges.push({ label: 'لاَم شمسيّة', tone: 'slate', note: NOTE_LAM_SHAMS });
+      else if (isSukun(l0) && QAMARIYYA.has(follow.ch)) otherBadges.push({ label: 'لاَم قَمَريّة', tone: 'slate', note: NOTE_LAM_QAMAR });
+      else if (isSukun(l0)) otherBadges.push({ label: 'لاَم شمسيّة', tone: 'slate', note: NOTE_LAM_SHAMS });
     }
   }
 
@@ -726,11 +742,12 @@ export function analyzeWord(
   const isGhunna = ghunnas.length > 0;
   const ghunnaType = isGhunna ? ghunnas[0].label : null;
 
+  const scale = TEMPO_SCALE[tempo] ?? 1;
   let expectedMs = 90 + 130 * Math.max(1, syllables);
   expectedMs += Math.min(1500, madds.reduce((a, m) => a + m.ms, 0));
   expectedMs += Math.min(800, ghunnas.reduce((a, g) => a + g.ms, 0));
   expectedMs += qalqalaMs;
-  expectedMs = Math.max(240, expectedMs);
+  expectedMs = Math.max(Math.round(240 * scale), Math.round(expectedMs * scale));
 
   return { word, syllables, isMadd, maddType, isGhunna, ghunnaType, rules, expectedMs };
 }
@@ -797,14 +814,14 @@ const NOTE_RA_WAJHAN =
 const NOTE_LAM_ALLAH_TAFKHIM = 'لام لفظ الجلالة تُفخَّم إذا كان ما قبلها مفتوحًا أو مضمومًا (قَالُواْ ٱللَّهَ، عَبۡدُ ٱللَّهِ).';
 const NOTE_LAM_ALLAH_TARQIQ = 'لام لفظ الجلالة تُرقَّق إذا كان ما قبلها مكسورًا (بِسۡمِ ٱللَّهِ) أو سبِق بياء ساكنة (خَيۡرُ ٱللَّهِ).';
 const NOTE_LAM_QAMAR = 'لام التعريف قبل حرف قمري (أ ب ج ح خ ع غ ف ق ك م هـ و ي): تُقرأ ساكنة ظاهرة.';
-const NOTE_LAM_SHAMS = 'لام التعريف قبل حرف شمسي (ت ث د ذ ر ز س ش ص ض ط ظ ل ن): تُدغم فيه ويُشدَّد الحرف (ٱلشَّهۡر).';
+const NOTE_LAM_SHAMS =
+  'لام التعريف قبل حرف شمسي (ت ث د ذ ر ز س ش ص ض ط ظ ل ن) تُدغم فيه ويُشدَّد الحرف (ٱلشَّهۡر، ٱلنَّاس). والغُنّة بعد إدغام اللام في النون هي غُنّة النون المشدَّدة، لا إدغام نونٍ ساكنة في ما بعدها.';
 const NOTE_ISTILA = 'حروف الاستعلاء (خُصَّ ضَغْطٍ قِظْ) مفخَّمة دائمًا: يُرفع بها أقصى اللسان عند النطق.';
 const GHUNNA_NOTE =
-  'الغُنّة: صوت رخيم يخرج من الخيشوم مقداره حركتان — وهي في هذا الموضع لازمةٌ عند جميع القراء، لا خلاف فيها بين الروايات.';
+  'الغُنّة صوت يخرج من الخيشوم مقداره حركتان، وهي في هذا الموضع لازمة عند جميع القرّاء بلا خلاف بين الروايات (تحفة الأطفال والمقدمة الجزرية).';
 const GHUNNA_NOTES: Record<string, string> = {
-  // غُنّة المشدَّدتين حكمٌ متَّفقٌ عليه عند كل القراء، لا خاصّةً بحفص؛ ومنه نون «ٱلنَّفَّاثَاتِ».
   'غُنّة مَدِّية':
-    'النون أو الميم المشدَّدة تُغَنّ بمقدار حركتين، وهو حكمٌ متَّفقٌ عليه عند كل القراء — ومنه نون «ٱلنَّفَّاثَاتِ» في سورة الفلق (وَمِن شَرِّ ٱلنَّفَّاثَاتِ)، ومنه (إِنَّ، ثُمَّ).',
+    'كل نون أو ميم مشدَّدة في القرآن تُغَنّ أكملَ ما تكون الغنّة بمقدار حركتين، عند جميع القرّاء بلا استثناء. قال الجمزوري في التحفة: «وغُنَّ ميمًا ثم نونًا شُدِّدا / وسمِّ كلاً حرفَ غنّةٍ بدا»، وقال ابن الجزري: «وأظهِرِ الغنّةَ من نونٍ ومن / ميمٍ إذا ما شُدِّدا». والحكم عام في نحو إِنَّ وثُمَّ والنَّاس والجَنَّة، لا يختصّ برواية ولا بكلمة. والنون هنا متحرّكة مشدَّدة وليست ساكنة، فلا إدغام لها ولا إخفاء في الحرف بعدها (والفاء حرف إخفاء للنون الساكنة لا حرف إدغام).',
 };
 
 /* ------------------------------------------------------------------ */

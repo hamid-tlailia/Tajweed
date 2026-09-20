@@ -3,7 +3,8 @@
 // التشغيل: npx tsx scripts/test-tajweed.ts  أو  npm run test:rules
 import { readFileSync } from 'node:fs';
 import type { Riwayah } from '../src/lib/types.ts';
-import { analyzeWord, analyzeWords } from '../src/lib/tajweed.ts';
+import { scoreTranscriptMatch } from '../src/lib/match.ts';
+import { analyzeWord, analyzeWords, TEMPO_SCALE } from '../src/lib/tajweed.ts';
 import { toNumberArray } from '../src/lib/whisper.ts';
 
 const quran: any = JSON.parse(readFileSync(new URL('../public/quran.json', import.meta.url)));
@@ -450,10 +451,9 @@ console.log('\n════════ 13) تغطية رواية ورش على 
   }
 }
 
-console.log('\n════════ 14) استدراك موثَّق: غُنّة النون المشدَّدة عامة عند كل القراء ════════');
+console.log('\\n════════ 14) غُنّة المشدَّدتين عامة من المتون — لا تختصّ بكلمة ولا برواية ════════');
 {
-  // «وَمِن شَرِّ ٱلنَّفَّاثَاتِ فِي ٱلۡعُقَدِ» — نون مشدَّدة، وغُنّتها حكمٌ متَّفقٌ عليه
-  // عند جميع القراء لا خاصّةً بحفص؛ ولا تختصّ برواية دون أخرى.
+  // الحكم من تحفة الأطفال والجزرية: كل نون/ميم مشدَّدة تُغَنّ حركتين عند جميع القرّاء.
   const naffathat = (r: Riwayah) => {
     const ws = wordsOf(113, 4);
     const rs = analyzeWords(ws, r);
@@ -462,14 +462,46 @@ console.log('\n════════ 14) استدراك موثَّق: غُن�
   };
   const h = naffathat('hafs');
   const w = naffathat('warsh');
-  check(Boolean(h) && has(h!, 'غُنّة مَدِّية'), 'ٱلنَّفَّاثَاتِ → غُنّة مدِّية (حفص)', h ? rulesOf(h) : '—');
-  check(Boolean(w) && has(w!, 'غُنّة مَدِّية'), 'ٱلنَّفَّاثَاتِ → غُنّة مدِّية (ورش) — الحكم عام', w ? rulesOf(w) : '—');
+  check(Boolean(h) && has(h!, 'غُنّة مَدِّية'), 'ٱلنَّفَّاثَاتِ → غُنّة المشدَّدة (حفص)', h ? rulesOf(h) : '—');
+  check(Boolean(w) && has(w!, 'غُنّة مَدِّية'), 'ٱلنَّفَّاثَاتِ → غُنّة المشدَّدة (ورش) — الحكم عام', w ? rulesOf(w) : '—');
+  check(has(h!, 'لاَم شمسيّة'), 'ٱلنَّفَّاثَاتِ → لام شمسية (إدغام اللام في النون)', rulesOf(h!));
+  check(hasNot(h!, 'إخفاء') && hasNot(h!, 'إدغام بغُنّة'), 'النون متحركة مشدَّدة فلا إخفاء/إدغام في الفاء (حفص)', rulesOf(h!));
+  check(hasNot(w!, 'إخفاء') && hasNot(w!, 'إدغام بغُنّة'), 'ولا عند ورش: لا أصل لإدغام النون في الفاء', rulesOf(w!));
   const note = h?.rules.find((r) => r.label === 'غُنّة مَدِّية')?.note ?? '';
-  check(/كل القراء|جميع القراء/.test(note), 'شرح الغُنّة ينصّ على اتفاق القراء جميعًا', note.slice(0, 60) + '…');
+  check(/جميع القرّاء|كل القراء|جميع القراء/.test(note), 'شرح الغُنّة ينصّ على اتفاق القرّاء', note.slice(0, 80) + '…');
+  check(/تحفة|الجزري/.test(note), 'الشرح يستند إلى التحفة أو الجزرية', note.slice(0, 80) + '…');
   check(!/عند حفص/.test(note), 'لم يبقَ في شرح الغُنّة قصرُ الحكم على حفص');
+  check(!/النَّفَّاثَاتِ/.test(note) && !/النفاثات/.test(note), 'الشرح عامّ لا يختصّ بكلمة النفاثات');
   const ikhfaNote =
     analyzeWord('مِنۡ', 'فَرَحࣲ', '', 'hafs').rules.find((r) => r.label === 'غُنَّة الإخفاء')?.note ?? '';
   check(!/عند حفص/.test(ikhfaNote), 'شرح غُنّة الإخفاء أيضًا عامٌّ لا حفصيّ');
+  check(has(analyzeWord('إِنَّ', 'ٱللَّهَ'), 'غُنّة مَدِّية'), 'إِنَّ → غُنّة المشدَّدة');
+  check(has(analyzeWord('ثُمَّ'), 'غُنّة مَدِّية'), 'ثُمَّ → غُنّة المشدَّدة');
+  const nas = findWord(114, 1, (b) => b === 'الناس' || b.endsWith('ناس'));
+  check(nas ? has(nas, 'غُنّة مَدِّية') : true, 'ٱلنَّاس → غُنّة نون مشدَّدة (لام شمسية)', nas ? rulesOf(nas) : '—');
+}
+
+console.log('\\n════════ 15) مراتب القراءة: الحدر والتدوير والترتيل ════════');
+{
+  const t = analyzeWord('مَا', 'خَلَقَ', '', 'hafs', 'tartil');
+  const d = analyzeWord('مَا', 'خَلَقَ', '', 'hafs', 'tadwir');
+  const hh = analyzeWord('مَا', 'خَلَقَ', '', 'hafs', 'hadr');
+  check(has(t, 'مَدٌّ طَبِيعِي') && has(hh, 'مَدٌّ طَبِيعِي'), 'الأحكام لا تتغيّر بتغيّر المرتبة', `${rulesOf(t)} | ${rulesOf(hh)}`);
+  check(hh.expectedMs < d.expectedMs && d.expectedMs < t.expectedMs, 'أزمنة الحدر < التدوير < الترتيل', `${hh.expectedMs} < ${d.expectedMs} < ${t.expectedMs}`);
+  const ratio = hh.expectedMs / t.expectedMs;
+  check(Math.abs(ratio - TEMPO_SCALE.hadr) < 0.08, 'نسبة الحدر/الترتيل تطابق مقياس المرتبة', ratio.toFixed(3));
+}
+
+console.log('\\n════════ 16) مطابقة النصّ: حروف متصلة لا تُظهر صفرًا ════════');
+{
+  const exact = scoreTranscriptMatch('من شر ما خلق', 'من شر ما خلق');
+  check(exact.match === 1 && !exact.empty, 'مطابقة تامة للكلمات', String(exact.match));
+  const glued = scoreTranscriptMatch('منشرماخلق', 'من شر ما خلق');
+  check(glued.match >= 0.8 && !glued.empty, 'نصّ عربي بلا فواصل لا يُظهر 0٪', glued.match.toFixed(2));
+  const empty = scoreTranscriptMatch('hello world', 'من شر ما خلق');
+  check(empty.empty && empty.match === 0, 'نصّ لاتيني يُعدّ فارغًا عربيًّا');
+  const close = scoreTranscriptMatch('من شر ما خالق', 'من شر ما خلق');
+  check(close.match >= 0.7, 'كلمة قريبة لا تُسقط المطابقة', close.match.toFixed(2));
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURES / ${pass} passed`}`);

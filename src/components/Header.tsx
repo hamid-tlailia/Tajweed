@@ -34,7 +34,7 @@ export default function Header() {
           : { dot: 'bg-slate-500', text: 'السماع الذكي غير مُجهَّز بعد', cls: 'text-slate-400' };
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line/70 bg-ink-950/90 backdrop-blur-md">
+    <header className="border-b border-line/70 bg-ink-950/90 backdrop-blur-md">
       <div className="mx-auto max-w-[1500px] px-3 py-3 sm:px-5 sm:py-3.5">
         <div className="flex items-center gap-3 sm:gap-4">
           {/* الشعار والعنوان */}
