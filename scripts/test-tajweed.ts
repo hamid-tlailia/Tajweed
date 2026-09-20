@@ -2,7 +2,9 @@
 // (تُقرأ الآيات نفسها من public/quran.json — نسخة ar.quran-uthmani)
 // التشغيل: npx tsx scripts/test-tajweed.ts  أو  npm run test:rules
 import { readFileSync } from 'node:fs';
+import type { Riwayah } from '../src/lib/types.ts';
 import { analyzeWord, analyzeWords } from '../src/lib/tajweed.ts';
+import { toNumberArray } from '../src/lib/whisper.ts';
 
 const quran: any = JSON.parse(readFileSync(new URL('../public/quran.json', import.meta.url)));
 const ayahText = (s: number, a: number): string =>
@@ -334,6 +336,117 @@ console.log('\\n════════ 10) تغطية المصحف كاملً�
     'مَدُّ اللِّين (عند الوقف)', 'غُنّة مَدِّية', 'إخفاء شفوي', 'إظهار شفوي', 'راء مفخَّمة', 'راء مرقَّقة']) {
     const found = sorted.some(([k]) => k === must);
     check(found, `الحكم «${must}» مكتشف فعليًا في المصحف`);
+  }
+}
+
+console.log('\n════════ 11) إصلاح BigInt: تطبيع مخرجات النموذج إلى أرقام ════════');
+{
+  // بعض نُسخ ONNX Runtime تُرجع معرفات الرموز int64 فتظهر BigInt وترمي عند أي حساب
+  // عليها («Cannot convert a BigInt value to a number») — وهذا ما كان يُسقط التحليل.
+  const big = new BigInt64Array([50257n, 1234n, 0n]);
+  const nums = toNumberArray(big);
+  check(
+    nums.length === 3 && nums[0] === 50257 && nums[1] === 1234 && nums[2] === 0,
+    'BigInt64Array ← أرقام عادية (بلا رمي)',
+    nums.join('، '),
+  );
+  check(
+    toNumberArray([1n, 2, 3]).every((v) => typeof v === 'number'),
+    'خلط BigInt بأرقام عادية ← كلها numbers',
+  );
+  let ok = true;
+  let sum = 0;
+  try {
+    sum = toNumberArray(big).reduce((a, b) => a + b, 0);
+  } catch {
+    ok = false;
+  }
+  check(ok && sum === 51491, 'الحساب على الناتج لا يرمي BigInt', String(sum));
+  check(toNumberArray(new Int32Array([7, 8])).join(',') === '7,8', 'Int32Array يبقى كما هو');
+  check(toNumberArray(null).length === 0 && toNumberArray(undefined).length === 0, 'الفارغ ← مصفوفة فارغة');
+}
+
+console.log('\n════════ 12) رواية ورش عن نافع (فروق الأصول) ════════');
+{
+  const wordsR = (s: number, a: number, r: Riwayah) => analyzeWords(wordsOf(s, a), r);
+  const findR = (s: number, a: number, pred: (b: string) => boolean, r: Riwayah): R | null => {
+    const ws = wordsOf(s, a);
+    const rs = analyzeWords(ws, r);
+    const i = ws.findIndex((w) => pred(bare(w)));
+    return i >= 0 ? rs[i] : null;
+  };
+
+  // النقل: «عَلَیۡهِمۡ ءَأَنذَرۡتَهُمۡ» ← عَلَيْهِمَأَنْذَرْتَهُم
+  const naql = findR(2, 6, (b) => b === 'عليهم', 'warsh');
+  check(has(naql!, 'نَقْل حركة الهمزة'), 'عَلَیۡهِمۡ ءَأَنذَرۡتَهُمۡ → نَقْل حركة الهمزة (ورش)', rulesOf(naql!));
+  check(hasNot(findR(2, 6, (b) => b === 'عليهم', 'hafs')!, 'نَقْل حركة الهمزة'), 'وعند حفص لا نَقْل');
+
+  // إبدال الهمز الساكن: یُؤۡمِنُونَ ← يُومِنُونَ
+  const ibdal = findR(2, 6, (b) => b === 'يؤمنون', 'warsh');
+  check(has(ibdal!, 'إبدال الهمز الساكن'), 'یُؤۡمِنُونَ → إبدال الهمز الساكن (ورش)', rulesOf(ibdal!));
+  check(hasNot(findR(2, 6, (b) => b === 'يؤمنون', 'hafs')!, 'إبدال الهمز الساكن'), 'وعند حفص تحقيق الهمزة');
+
+  // الهمزتان في كلمة
+  const hamz = findR(2, 6, (b) => b.includes('نذرت'), 'warsh');
+  check(has(hamz!, 'الهمزتان في كلمة'), 'ءَأَنذَرۡتَهُمۡ → الهمزتان في كلمة (ورش)', rulesOf(hamz!));
+
+  // تقليل ذوات الياء + استثناء (عَلَىٰ، إِلَىٰ، حَتَّىٰ)
+  check(
+    has(findR(2, 5, (b) => b === 'هدي', 'warsh')!, 'تقليل ذوات الياء'),
+    'هُدࣰى → تقليل ذوات الياء (ورش)',
+    rulesOf(findR(2, 5, (b) => b === 'هدي', 'warsh')!),
+  );
+  check(
+    hasNot(findR(2, 5, (b) => b === 'عليا', 'warsh')!, 'تقليل ذوات الياء'),
+    'عَلَىٰ → لا تقليل (من المستثنيات المفتوحة عند ورش)',
+  );
+  check(
+    hasNot(findR(2, 5, (b) => b === 'هدي', 'hafs')!, 'تقليل ذوات الياء'),
+    'وعند حفص لا تقليل في ذوات الياء',
+  );
+
+  // تقليل ذوات الراء: أَصۡحَـٰبُ ٱلنَّارِ
+  const ra = findR(2, 39, (b) => b === 'النار', 'warsh');
+  check(ra ? has(ra, 'تقليل ذوات الراء') : true, 'ٱلنَّارِ → تقليل ذوات الراء (ورش)', ra ? rulesOf(ra) : '—');
+
+  // المدود: البدل والمتصل يطولان عند ورش
+  const badalH = analyzeWord('ءَامَنُوا۟', '', '', 'hafs');
+  const badalW = analyzeWord('ءَامَنُوا۟', '', '', 'warsh');
+  check(
+    badalW.expectedMs > badalH.expectedMs && /ثلاثة أوجه/.test(badalW.rules.find((r) => r.label === 'مَدُّ الْبَدَل')?.note ?? ''),
+    'ءَامَنُوا۟ → البدل (٢/٤/٦) عند ورش أطول من حفص',
+    `${badalH.expectedMs}ms ← ${badalW.expectedMs}ms`,
+  );
+  const muttH = analyzeWord('جَاۤءَ', '', '', 'hafs');
+  const muttW = analyzeWord('جَاۤءَ', '', '', 'warsh');
+  check(muttW.expectedMs > muttH.expectedMs, 'جَاۤءَ → المتصل ٦ عند ورش', `${muttH.expectedMs}ms ← ${muttW.expectedMs}ms`);
+}
+
+console.log('\n════════ 13) تغطية رواية ورش على المصحف كاملًا ════════');
+{
+  const counts = new Map<string, number>();
+  let words = 0;
+  let msInvalid = 0;
+  const t0 = Date.now();
+  for (const s of quran.surahs) {
+    for (const a of s.ayahs) {
+      const ws = a.text
+        .trim()
+        .replace(/[\u200a\u2060\u200c\ufeff]/g, '')
+        .split(/\s+/)
+        .filter((w: string) => /[\u0621-\u064A]/.test(w));
+      for (const r of analyzeWords(ws, 'warsh')) {
+        words++;
+        if (!Number.isFinite(r.expectedMs) || r.expectedMs < 200) msInvalid++;
+        for (const b of r.rules) counts.set(b.label, (counts.get(b.label) ?? 0) + 1);
+      }
+    }
+  }
+  console.log(`  ${words} كلمة في ${Math.round((Date.now() - t0) / 100) / 10}s`);
+  check(words > 77000 && msInvalid === 0, 'المصحف كاملًا برواية ورش دون أزمنة غير صالحة', `${words} كلمة، غير صالحة: ${msInvalid}`);
+  for (const must of ['نَقْل حركة الهمزة', 'إبدال الهمز الساكن', 'الهمزتان في كلمة', 'تقليل ذوات الياء', 'تقليل ذوات الراء']) {
+    const n = counts.get(must) ?? 0;
+    check(n > 0, `الحكم «${must}» مكتشف فعليًا برواية ورش`, `${n} كلمة`);
   }
 }
 

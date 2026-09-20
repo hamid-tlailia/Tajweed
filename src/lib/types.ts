@@ -4,6 +4,9 @@ export type ModelSize = 'tiny' | 'base';
 export type EngineId = 'whisper-attn' | 'whisper-ts' | 'whisper-energy' | 'offline-dtw';
 export type ModelStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+/** الرواية المقروء بها — لكل رواية أصولُها في المدود والهمز والإمالة */
+export type Riwayah = 'hafs' | 'warsh';
+
 export interface SurahMeta {
   id: number;
   name: string;
