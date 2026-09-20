@@ -12,7 +12,7 @@ export function fmtTime(ms: number): string {
 }
 
 export function fmtSec(ms: number): string {
-  return (ms / 1000).toFixed(2) + 's';
+  return (ms / 1000).toFixed(2) + ' ث';
 }
 
 /** Deterministic PRNG for the demo simulator */

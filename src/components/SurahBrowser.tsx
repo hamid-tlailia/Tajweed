@@ -36,9 +36,8 @@ export default function SurahBrowser() {
 
   return (
     <Panel
-      title="مِسْكُ الخِطَاب"
-      subtitle="اختر السورة والآية المستهدفة — يُبنى نصّ التراصف القسري منها (114 سورة بالتشكيل)"
-      latin="Qur'an Navigator"
+      title="اختر ما تريد التمرّن عليه"
+      subtitle="اختر السورة، ثم آيةً واحدة أو السورة كاملة — النصّ بالرسم العثماني والتشكيل الكامل"
       className="mb-5"
     >
       {surahsStatus === 'loading' && (
@@ -109,8 +108,8 @@ export default function SurahBrowser() {
             </div>
             <p className="mt-3 text-[10px] leading-relaxed text-slate-500">
               {scope === 'ayah'
-                ? `يُتراصَف صوتُك على كلمات الآية ${selectedAyah} فقط.`
-                : `يُتراصَف صوتُك على كامل السورة (${data.meta.numberOfAyahs} آية). للتلاوات الطويلة يُنصح بقصّ العيّنة صوتيًا.`}
+                ? `سيُقيَّم تسجيلك على كلمات الآية ${selectedAyah} فقط — أنسب للتمرين.`
+                : `سيُقيَّم تسجيلك على السورة كاملة (${data.meta.numberOfAyahs} آية) — ابدأ بآية للدقة.`}
             </p>
           </div>
 
@@ -146,11 +145,11 @@ export default function SurahBrowser() {
         <div className="mt-4">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-quran text-base text-gold-300">
-              كلمات النصّ المستهدَف{' '}
-              <span className="font-brand text-[10px] text-slate-500">({target.label})</span>
+              كلمات الآيات المختارة{' '}
+              <span className="text-[10px] text-slate-500">({target.label})</span>
             </h3>
             <span className="text-[10px] text-slate-500">
-              {target.words.length} كلمة · تُضاء البطاقات وفق التوقيت المُستخرَج من التراصف
+              {target.words.length} كلمة · تُضاء الكلمات مع صوتك أثناء الاستماع للنتيجة
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -160,7 +159,7 @@ export default function SurahBrowser() {
               const showAyah = i === 0 || target.words[i].ayah !== target.words[i - 1].ayah;
               return (
                 <span key={i} className="inline-flex items-center gap-1.5">
-                  {showAyah ? <span className="font-brand text-[9px] text-slate-600">آ.{w.ayah}</span> : null}
+                  {showAyah ? <span className="text-[9px] text-slate-600">آية {w.ayah}</span> : null}
                   <span
                     className={`rounded-lg border px-2.5 py-1.5 transition ${statusCardClass(wa ? wa.status : null)} ${
                       active ? 'shadow-[0_0_18px_rgba(212,175,55,0.35)] ring-2 ring-gold-400' : ''

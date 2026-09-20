@@ -42,9 +42,9 @@ export default function Home() {
         )}
       </main>
       <footer className="border-t border-line/60 py-5 text-center text-[11px] leading-relaxed text-slate-500">
-        <span className="font-brand tracking-[0.2em] text-gold-500">TAHQĪQ</span> · تحقيق — معالجة صوتية بالكامل على
-        جهازك (Whisper · ONNX Runtime Web · WASM) · أداة مساعدة للتمرن وليست بديلًا عن المُجوِّد · بيانات القرآن:
-        AlQuran Cloud (ar.quran-uthmani)
+        <span className="font-quran text-sm text-gold-500">تَحَقُّق</span> · تطبيق مساعد على إتقان التلاوة بالتجويد —
+        يحلّل معالجٌ ذكي صوتَك على جهازك دون أن يُرفَع إلى الإنترنت · أداةُ تمرين لا تُغني عن أستاذ التجويد
+        والمُقرئين · نصّ المصحف: رواية حفص — AlQuran Cloud
       </footer>
     </div>
   );
