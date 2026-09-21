@@ -136,31 +136,58 @@ const ALLAH_PREFIXES = ['و', 'ف', 'ب', 'ك', 'ت'];
  *   • متصل ومنفصل: حفص أربع أو خمس (٧٠٠/٦٠٠) — ورش ستًّا مشبعًا (٩٠٠).
  *   • الصلة الكبرى: حفص ٤–٥ — ورش ستًّا. واللازم ستٌّ عندهما.
  */
-const MADD_PROFILE: Record<Riwayah, Record<MaddKind, number>> = {
+/**
+ * زمن الحركة الواحدة في مرتبة الترتيل بالملي ثانية.
+ * كل زمنٍ في هذا الملف مشتقٌّ منه، فلا يُضبط حكمٌ بمعزل عن سواه:
+ * الحركة القصيرة ≈ حركة واحدة، والمدُّ الطبيعي حركتان، والمتصل أربع/خمس،
+ * واللازم ستٌّ — كما في تحفة الأطفال والجزريّة. ومقياس المرتبة (TEMPO_SCALE)
+ * يقصّر الحركة لا عدد الحركات.
+ */
+export const HARAKA_MS = 260;
+
+/** كل مدٍّ مقدَّرًا بعدد حركاته (لا بملي ثانية مطلقة) */
+const MADD_HARAKAT: Record<Riwayah, Record<MaddKind, number>> = {
   hafs: {
-    tabee: 350,
-    badal: 350,
-    muttasil: 700,
-    munfasil: 600,
-    lazim: 700,
-    silaSughra: 280,
-    silaKubra: 600,
-    leen: 350,
-    arid: 450,
-    iwad: 350,
+    tabee: 2,
+    badal: 2,
+    muttasil: 4.5, // واجب متصل: ٤ أو ٥ حركات
+    munfasil: 4, // جائز منفصل: ٤ أو ٥، وغالب عمل حفص ٤
+    lazim: 6, // لازم كلمي/حرفي: ستّ حركات
+    silaSughra: 2,
+    silaKubra: 4,
+    leen: 2,
+    arid: 3, // عارض للسكون: ٢/٤/٦ وأوسطها ٣ عند التوسّط
+    iwad: 2,
   },
   warsh: {
-    tabee: 350,
-    badal: 700,
-    muttasil: 900,
-    munfasil: 900,
-    lazim: 700,
-    silaSughra: 280,
-    silaKubra: 900,
-    leen: 350,
-    arid: 450,
-    iwad: 350,
+    tabee: 2,
+    badal: 4, // لورش في البدل ثلاثة أوجه (٢/٤/٦) وأوسطها ٤
+    muttasil: 6, // ورش يُشبع المتصل ستًّا
+    munfasil: 6,
+    lazim: 6,
+    silaSughra: 2,
+    silaKubra: 6,
+    leen: 2,
+    arid: 3,
+    iwad: 2,
   },
+};
+
+/** الغُنّة حركتان في كل أحوالها */
+const GHUNNA_HARAKAT = 2;
+
+/** زمن ثابت لكل كلمة (بدء النطق وقطعه) فوق زمن مقاطعها */
+const WORD_FIXED_MS = 70;
+/** أدنى زمنٍ تُعطاه كلمة مهما قصرت */
+const MIN_WORD_MS = 240;
+
+const MADD_PROFILE: Record<Riwayah, Record<MaddKind, number>> = {
+  hafs: Object.fromEntries(
+    Object.entries(MADD_HARAKAT.hafs).map(([k, h]) => [k, Math.round(h * HARAKA_MS)]),
+  ) as Record<MaddKind, number>,
+  warsh: Object.fromEntries(
+    Object.entries(MADD_HARAKAT.warsh).map(([k, h]) => [k, Math.round(h * HARAKA_MS)]),
+  ) as Record<MaddKind, number>,
 };
 
 type MaddKind =
@@ -445,8 +472,8 @@ export function analyzeWord(
     madds.push({ label, ms });
     maddBadges.push({ label, tone: 'gold', note: maddNote(label, riwayah) });
   };
-  const pushGhunna = (label: string, ms: number) => {
-    ghunnas.push({ label, ms });
+  const pushGhunna = (label: string, harakat: number = GHUNNA_HARAKAT) => {
+    ghunnas.push({ label, ms: Math.round(harakat * HARAKA_MS) });
     ghunnaBadges.push({ label, tone: 'mint', note: GHUNNA_NOTES[label] ?? GHUNNA_NOTE });
   };
 
@@ -565,24 +592,24 @@ export function analyzeWord(
     const markedQalb = toks[nunRuleIdx].qb;
     if (markedQalb || fol === 'ب') {
       otherBadges.push({ label: 'إقلاب', tone: 'mint', note: NOTE_IQLAB });
-      pushGhunna('غُنَّة الإقلاب', 280);
+      pushGhunna('غُنَّة الإقلاب');
     } else if (IZHAAR_HALQI.has(fol)) {
       otherBadges.push({ label: 'إظهار حلقي', tone: 'mint', note: NOTE_IZHAAR });
     } else if (IDGHAM_GHUNNA.has(fol)) {
       otherBadges.push({ label: 'إدغام بغُنّة', tone: 'mint', note: NOTE_IDGHAM_GHUNNA });
-      pushGhunna('غُنَّة الإدغام', 280);
+      pushGhunna('غُنَّة الإدغام');
     } else if (IDGHAM_LA_RA.has(fol)) {
       otherBadges.push({ label: 'إدغام بغير غُنّة', tone: 'mint', note: NOTE_IDGHAM_BILA });
     } else if (IKHFA.has(fol)) {
       otherBadges.push({ label: 'إخفاء', tone: 'mint', note: NOTE_IKHFA });
-      pushGhunna('غُنَّة الإخفاء', 280);
+      pushGhunna('غُنَّة الإخفاء');
     }
   }
 
   /* ==================== غُنّة المشدَّدتين (نّ / مّ): غُنّة مدِّية ==================== */
   for (let i = 0; i < n; i++) {
     if ((toks[i].ch === 'ن' || toks[i].ch === 'م') && toks[i].sh) {
-      pushGhunna('غُنّة مَدِّية', 300);
+      pushGhunna('غُنّة مَدِّية');
       break;
     }
   }
@@ -595,10 +622,10 @@ export function analyzeWord(
     if (nx.ch === 'ب' && (t.qb || nx.qb)) {
       // أُنۢبِئُهُمۡ: إقلاب داخل الكلمة — يؤكِّده قلم المصحف ۢ
       otherBadges.push({ label: 'إقلاب (داخل الكلمة)', tone: 'mint', note: NOTE_IQLAB_INNER });
-      pushGhunna('غُنَّة الإقلاب', 280);
+      pushGhunna('غُنَّة الإقلاب');
     } else if (INNER_IKHFA_WORDS.has(stripped)) {
       otherBadges.push({ label: 'إخفاء داخل الكلمة', tone: 'mint', note: NOTE_IKHFA_INNER });
-      pushGhunna('غُنَّة الإخفاء', 280);
+      pushGhunna('غُنَّة الإخفاء');
     } else {
       otherBadges.push({ label: 'إظهار داخل الكلمة', tone: 'slate', note: NOTE_IZHAAR_INNER });
     }
@@ -609,10 +636,10 @@ export function analyzeWord(
   if (lastTok && lastTok.ch === 'م' && isSukun(lastTok) && !lastTok.sh && fol) {
     if (fol === 'ب') {
       otherBadges.push({ label: 'إخفاء شفوي', tone: 'mint', note: NOTE_IKHFA_SHAFAWI });
-      pushGhunna('غُنَّة الإخفاء الشفوي', 280);
+      pushGhunna('غُنَّة الإخفاء الشفوي');
     } else if (fol === 'م') {
       otherBadges.push({ label: 'إدغام متماثل صغير', tone: 'mint', note: NOTE_IDGHAM_MITHLAYN });
-      pushGhunna('غُنَّة الإدغام', 280);
+      pushGhunna('غُنَّة الإدغام');
     } else {
       otherBadges.push({ label: 'إظهار شفوي', tone: 'mint', note: NOTE_IZHAAR_SHAFAWI });
     }
@@ -743,11 +770,13 @@ export function analyzeWord(
   const ghunnaType = isGhunna ? ghunnas[0].label : null;
 
   const scale = TEMPO_SCALE[tempo] ?? 1;
-  let expectedMs = 90 + 130 * Math.max(1, syllables);
-  expectedMs += Math.min(1500, madds.reduce((a, m) => a + m.ms, 0));
-  expectedMs += Math.min(800, ghunnas.reduce((a, g) => a + g.ms, 0));
+  // مقطعٌ قصير ≈ حركة، وعليه ثابتُ انطلاقٍ لبداية الكلمة ونهايتها
+  let expectedMs = WORD_FIXED_MS + HARAKA_MS * Math.max(1, syllables);
+  // سقفٌ يجمع مدود الكلمة الواحدة بلا مبالغة (أطولها لازمٌ بستّ حركات)
+  expectedMs += Math.min(8 * HARAKA_MS, madds.reduce((a, m) => a + m.ms, 0));
+  expectedMs += Math.min(4 * HARAKA_MS, ghunnas.reduce((a, g) => a + g.ms, 0));
   expectedMs += qalqalaMs;
-  expectedMs = Math.max(Math.round(240 * scale), Math.round(expectedMs * scale));
+  expectedMs = Math.max(Math.round(MIN_WORD_MS * scale), Math.round(expectedMs * scale));
 
   return { word, syllables, isMadd, maddType, isGhunna, ghunnaType, rules, expectedMs };
 }

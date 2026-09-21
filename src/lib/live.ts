@@ -12,6 +12,7 @@
 import { classifyWord } from './tajweed';
 import { liveTip } from './coach';
 import type { LiveAlert, LiveSnapshot, LiveWordStatus, WordStatus, WordTajweed } from './types';
+import { clamp, median } from './util';
 
 /** مهلة إغلاق الكلمة: أطول سكتة تُعدّ فاصلة بين كلمتين (م.ث) */
 const GAP_MS = 150;
@@ -19,6 +20,8 @@ const GAP_MS = 150;
 const MAX_OVER_MS = 900;
 /** تثبيت أن الطوت بدأ: أول إطار صوتي */
 const START_THR = 0.012;
+/** أدنى زمنٍ يُعدّ كلمة مسموعة (دونه لا يُحتسب في عدلة السرعة) */
+const MIN_VOICED_MS = 70;
 
 export interface LiveWordEvent {
   index: number;
@@ -45,6 +48,15 @@ export class LiveTajweedTracker {
 
   /** أرضية الضجيج التكيّفية */
   private floorEma = 0.0045;
+
+  /**
+   * عدلة السرعة اللحظية: وسطيُ نِسَب ما أُقفل من كلمات إلى أزمنتها المتوقَّعة.
+   * بغيرها يُحكم على قارئٍ سريعٍ بـ«أقصر» في كل كلمة وعلى متأنٍّ بـ«أطول» في
+   * كل كلمة، فتتعارض التنبيهات وتبدو عشوائية — وهي ليست كذلك. تُطبَّق بعد
+   * كلمتين مسموعتين، وتُحَدّ حتى لا تتحوّل إلى تساهلٍ مطلق.
+   */
+  private ratios: number[] = [];
+  private scale = 1;
 
   private results: { status: LiveWordStatus; measuredMs: number }[] = [];
   private doneCount = 0;
@@ -108,7 +120,12 @@ export class LiveTajweedTracker {
       return;
     }
     const measured = Math.round(this.voicedMs);
-    const expected = this.tjs[i].expectedMs;
+    // تُحدَّث عدلة السرعة بما سُمع قبل هذه الكلمة، ثم يُحكم عليها بها
+    if (measured >= MIN_VOICED_MS && this.tjs[i].expectedMs > 0) {
+      this.ratios.push(measured / this.tjs[i].expectedMs);
+      if (this.ratios.length >= 2) this.scale = clamp(median(this.ratios), 0.6, 1.8);
+    }
+    const expected = Math.max(60, Math.round(this.tjs[i].expectedMs * this.scale));
     const status = classifyWord(measured, expected, this.tau);
     this.results[i] = { status, measuredMs: measured };
     this.doneCount++;

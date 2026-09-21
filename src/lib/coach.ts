@@ -108,6 +108,7 @@ export function buildCoach(
   score: number,
   transcriptMatch: number,
   matchSource: 'transcript' | 'coverage' | 'demo',
+  tempoScale = 1,
 ): { tips: CoachTip[]; summary: string; passed: boolean } {
   const tips = words.map(tipFor).filter((x): x is CoachTip => !!x);
   const passed = score >= PASS_SCORE;
@@ -129,6 +130,14 @@ export function buildCoach(
     if (long) parts.push(`${long} كلمة أطول من المطلوب.`);
     if (tips[0]) parts.push(`ابدأ بإصلاح: ${tips[0].action}`);
     else parts.push('أعد التلاوة أوضح وأقرب من الميكروفون، وراجع مرتبة القراءة (حدر/تدوير/ترتيل).');
+  }
+
+  if (tempoScale && (tempoScale < 0.82 || tempoScale > 1.22)) {
+    const dir = tempoScale < 1 ? 'أسرع' : 'أبطأ';
+    parts.push(
+      `قراءتك ${dir} من مرتبتك المختارة بنحو ${tempoScale.toFixed(2)}× — قِيسَتْ أحكامُك بعدلة سرعتك،` +
+        ` والأزمنة المعروضة لك هي أزمنة مرتبتك أنت. قرِّب سرعتك من المرتبة المختارة ليصفو القياس.`,
+    );
   }
 
   if (matchSource === 'coverage') {

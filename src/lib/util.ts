@@ -4,6 +4,14 @@ export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.ma
 
 export const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 
+/** الوسيط — صامد أمام الكلمات الشاذّة، بخلاف المتوسط */
+export function median(a: number[]): number {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 /**
  * ألوان الرسم على لوحات الموجة من متغيّرات الثيم — تُخزَّن مؤقتًا حتى يتغيّر
  * صنف الثيم على <html>، فلا تُقرأ الأنماط في كل إطار رسم.
