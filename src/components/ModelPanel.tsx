@@ -12,6 +12,16 @@ const SIZES: { id: ModelSize; label: string; size: string; hint: string }[] = [
   { id: 'base', label: 'أدقّ', size: '٨٠ م.ب', hint: 'تمييز أدقّ لأصوات الحروف — يُوصى بها' },
 ];
 
+// صرامة التقييم: ثلاث درجات صريحة بدل شريطٍ متصل — أوضح للمتعلّم وأسهل للمقارنة.
+type TauBand = 'lenient' | 'balanced' | 'strict';
+const TAUS: { id: TauBand; label: string; value: number; hint: string }[] = [
+  { id: 'lenient', label: 'متساهل', value: 0.2, hint: 'في أول التعلّم — يتجاوز عن القصور اليسير' },
+  { id: 'balanced', label: 'متوازن', value: 0.5, hint: 'الوسط — يذكّر ولا يُثقل' },
+  { id: 'strict', label: 'صارم', value: 0.8, hint: 'كما للممتازين — يطالب بالمقدار التامّ' },
+];
+/** الدرجة المعروضة من قيمة tau محفوظة (وقد تكون من شريطٍ قديم غير مضبوط على القيم الثلاث) */
+const tauBand = (tau: number): TauBand => (tau < 0.35 ? 'lenient' : tau < 0.7 ? 'balanced' : 'strict');
+
 export default function ModelPanel() {
   const modelSize = useTahqiq((s) => s.modelSize);
   const setModelSize = useTahqiq((s) => s.setModelSize);
@@ -100,31 +110,27 @@ export default function ModelPanel() {
 
       {/* صرامة التقييم */}
       <div className="mt-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <label htmlFor="tau" className="text-xs font-semibold text-slate-200">
-            صرامة التقييم
-          </label>
-          <span className="rounded-md border border-line bg-ink-800 px-2.5 py-0.5 text-xs text-mint-300">
-            {tau < 0.35 ? 'متساهل' : tau < 0.7 ? 'متوازن' : 'صارم'}
-          </span>
+        <p className="text-xs font-semibold text-slate-200">صرامة التقييم</p>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {TAUS.map((t) => {
+            const sel = tauBand(tau) === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTau(t.value)}
+                aria-pressed={sel}
+                className={`rounded-xl border p-2.5 text-start transition ${
+                  sel ? 'border-gold-500/70 bg-gold-500/10 shadow-[0_0_14px_rgba(212,175,55,0.15)]' : 'border-line bg-ink-850/60 hover:border-gold-600/40'
+                }`}
+              >
+                <span className={`block text-sm font-semibold ${sel ? 'text-gold-200' : 'text-slate-200'}`}>{t.label}</span>
+                <span className="mt-1 block text-[10px] leading-snug text-slate-500">{t.hint}</span>
+              </button>
+            );
+          })}
         </div>
-        <input
-          id="tau"
-          dir="ltr"
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={tau}
-          onChange={(e) => setTau(Number(e.target.value))}
-          className="mt-3 w-full"
-          aria-label="صرامة التقييم"
-        />
-        <div className="mt-1.5 flex justify-between text-[10px] text-slate-500">
-          <span>متساهل — في أول التعلّم</span>
-          <span>صارم — كما للممتازين</span>
-        </div>
-        <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
+        <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
           كلما زادت الصرامة طالبَ التطبيقُ نطقَك بأدقّ مقدارٍ للمدود والغنن (طبيعي حركتان، متصل ٤–٥، لازم ٦…).
         </p>
       </div>

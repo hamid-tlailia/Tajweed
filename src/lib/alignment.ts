@@ -345,6 +345,48 @@ export function computeWordSpans(
     b.startMs = cut;
   }
 
+  // ==== هل سُمعت الكلمةُ فعلًا؟ (تمييز الكلمة المُسقَطة من التلاوة المتعثّرة) ====
+  // قد يُسقط القارئ كلمةً فيبقى مكانَها سكوتٌ لا صوتَ فيه، ثم تتقدّم الكلمةُ التالية إليه
+  // فيبدو زمنُها المقاس أطولَ كثيرًا (وهو ما ترصده الدالةُ أعلاه «طويلة» لا «لم تُسمع»).
+  // فأمارةُ الإسقاط: أن تبتدئ الكلمةُ بعد فجوةِ سكوتٍ صريحة (١٢٠ م.ث فأكثر: لا يتّسع لها
+  // داخل الكلمة عادةً) ويكون زمنُها المقاس — مع ذلك — يزيد على ١٫٥ من وتيرة القارئ نفسه.
+  // حينئذٍ يُبطَل زمنُها وتُحكم «لم تُسمع» — وهو ما لا يُدركه قياسُ الزمن وحده.
+  {
+    const holes: { from: number; to: number }[] = [];
+    let hFrom = -1;
+    for (let f = 0; f <= n; f++) {
+      const quiet = f < n && energy[f] < thr;
+      if (quiet && hFrom < 0) hFrom = f;
+      else if (!quiet && hFrom >= 0) {
+        if (f - hFrom >= 5) holes.push({ from: hFrom, to: f - 1 });
+        hFrom = -1;
+      }
+    }
+    if (holes.length) {
+      // فجوةٌ تُعدّ سكتةً معتبرة: ١٢٠ م.ث فأكثر (تتجاوز ما يتسامح فيه داخل الكلمة)
+      const HOLE_MIN = 6;
+      const ratios: number[] = [];
+      for (let i = 0; i < out.length; i++) {
+        const m = out[i].endMs - out[i].startMs;
+        if (expectedMs[i] > 0 && m >= MIN_VOICED_MS) ratios.push(m / expectedMs[i]);
+      }
+      ratios.sort((a, b) => a - b);
+      const scale = ratios.length ? ratios[Math.floor(ratios.length / 2)] : 1;
+      for (let i = 0; i < out.length; i++) {
+        const sp = out[i];
+        if (expectedMs[i] <= 0 || sp.startMs <= 2 * frameMs) continue;
+        const measured = sp.endMs - sp.startMs;
+        if (measured < 1.5 * scale * expectedMs[i]) continue;
+        // فجوةٌ يبتدئ الصوتُ بعدها: بدايةُ الكلمة داخل سكوتٍ لا صوتَ فيه
+        const hit = holes.find(
+          (h) => sp.startMs >= h.from * frameMs - 2 * frameMs && sp.startMs <= (h.to + 1) * frameMs + 2 * frameMs,
+        );
+        if (!hit || hit.to - hit.from + 1 < HOLE_MIN) continue;
+        out[i] = { startMs: midsMs[i], endMs: midsMs[i] };
+      }
+    }
+  }
+
   if (out.length) out[0].startMs = Math.max(0, Math.min(out[0].startMs, 120));
   for (const o of out) {
     o.startMs = Math.max(0, Math.min(durationMs, o.startMs));
