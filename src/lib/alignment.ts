@@ -21,7 +21,7 @@ import type {
   WordAlignment,
   WordTajweed,
 } from './types';
-import { clamp, mean } from './util';
+import { clamp, mean, median } from './util';
 import { loadWhisper, whisperForcedAlignment, whisperTranscribeChunked, type TsChunk } from './whisper';
 
 export interface AlignInput {
@@ -47,6 +47,13 @@ export interface AlignHooks {
 const ATTN_MAX_WORDS = 60; // attention matrix size guard
 const ATTN_MAX_SEC = 31; // whisper context window guard
 
+/** طول إطار الطاقة (م.ث) — ٢٠ م.ث تُعطي حدودًا أدقّ من ٤٠ للكلمات القصيرة */
+const FRAME_MS = 20;
+/** أدنى زمنٍ يُعدّ كلمة مسموعة؛ دونه تُحكم الكلمة «لم تُسمع» */
+const MIN_VOICED_MS = 70;
+/** أدنى عرضٍ يبقى للكلمة عند فضّ تداخل الحدود (إطاران) */
+const MIN_SPAN_MS = 2 * FRAME_MS;
+
 export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: AlignHooks): Promise<AlignmentResult> {
   const sr = input.sampleRate ?? 16000;
   const samples = input.samples;
@@ -56,7 +63,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word), opts.riwayah, tempo);
 
   hooks.stage('تهيئة الصوت المسجَّل…');
-  const energy = energyEnvelope(samples, 40);
+  const energy = energyEnvelope(samples, FRAME_MS);
 
   let engine: EngineId = 'offline-dtw';
   let perWord: { midMs: number; conf: number }[] | null = null;
@@ -120,11 +127,22 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
 
   // precise start/end via per-word voiced-span VAD around each midpoint
   const spans = computeWordSpans(energy, mids, tjs.map((t) => t.expectedMs), durationMs);
+  const measuredMs = spans.map((sp) => Math.max(0, sp.endMs - sp.startMs));
+
+  // عدلة السرعة: وسطيُ نِسَب الأزمنة المقاسة إلى المتوقَّعة.
+  // الحكم على كلمةٍ يكون إلى نموذج الأزمنة «بسرعة القارئ نفسه» لا بسرعة نظرية
+  // مطلقة؛ وإلا عوقب من يقرأ مرتبةً أسرع أو أبطأ بـ«أقصر» على كل كلمة، وعوقب
+  // من يقرأ بترتيلٍ متأنٍّ بـ«أطول» على كل كلمة — فتتعارض التنبيهات بلا سبب.
+  const ratios: number[] = [];
+  for (let i = 0; i < measuredMs.length; i++) {
+    if (measuredMs[i] >= MIN_VOICED_MS && tjs[i].expectedMs > 0) ratios.push(measuredMs[i] / tjs[i].expectedMs);
+  }
+  const tempoScale = clamp(median(ratios) || 1, 0.35, 3);
+  const refMs = tjs.map((t) => Math.max(60, t.expectedMs * tempoScale));
 
   const alignWords: WordAlignment[] = words.map((w, i) => {
     const { startMs, endMs } = spans[i];
-    const measured = Math.max(0, endMs - startMs);
-    const status = classifyWord(measured, tjs[i].expectedMs, opts.tau);
+    const status = classifyWord(measuredMs[i], refMs[i], opts.tau);
     let conf = perWord[i].conf;
     if (engine === 'whisper-attn') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
     else if (engine === 'whisper-ts') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
@@ -137,12 +155,17 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       endMs: Math.max(startMs + 20, endMs),
       confidence: conf,
       status,
-      tajweed: tjs[i],
+      // الزمن المرجعيّ المعروض هو نفسه الذي حُكمت به الكلمة: بعدلة سرعة القارئ
+      tajweed: { ...tjs[i], expectedMs: Math.round(refMs[i]) },
     };
   });
 
   const meanConf = mean(alignWords.map((w) => w.confidence));
-  const meanTj = mean(alignWords.map((w) => tajweedScore(w.endMs - w.startMs, w.tajweed.expectedMs, opts.tau)));
+  // انتظام النسق: مطابقة الأزمنة بعدلة السرعة (وهو ما يُقاس عليه المتعلّم فعلًا)
+  const rhythm = mean(measuredMs.map((m, i) => tajweedScore(m, refMs[i], opts.tau)));
+  // ملاءمة المرتبة المختارة: انحراف السرعة وحده لا يُسقط الدرجة، لكن أثره يظهر فيها
+  const tempoFit = clamp(1 - Math.abs(Math.log2(tempoScale)) / 2.4, 0, 1);
+  const meanTj = 0.85 * rhythm + 0.15 * tempoFit;
   const voiced = alignWords.length ? alignWords.filter((w) => w.status !== 'silent').length / alignWords.length : 0;
 
   if (input.demo) {
@@ -160,7 +183,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
 
   const asrOk = matchSource === 'transcript' && transcriptMatch >= 0.25;
   const overallScore = Math.round(100 * (asrOk ? 0.4 * meanConf + 0.6 * meanTj : 0.2 * meanConf + 0.8 * meanTj));
-  const coach = buildCoach(alignWords, overallScore, transcriptMatch, matchSource);
+  const coach = buildCoach(alignWords, overallScore, transcriptMatch, matchSource, tempoScale);
 
   return {
     targetKey: opts.target.key,
@@ -179,77 +202,153 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     audioUrl: input.url ?? null,
     samples,
     tempo,
+    tempoScale,
     tips: coach.tips,
     summary: coach.summary,
     passed: coach.passed,
   };
 }
 
+/**
+ * عتبة الصوت/الصمت لمغلَّف الطاقة.
+ *
+ * لا يُبنى الحدّ على «المتوسط + انحراف» ولا على عُشرٍ مئويّ ثابت: التلاوة المتصلة
+ * (وهي الأصل في الأداء) لا تكاد تحتوي صمتًا، فأيّ عتبةٍ تُشتقّ من توزيعها تقع
+ * فوق معظم إطاراتها وتُسقِط الكلمات كلها. لذلك تُقاس أرضية الضجيج من أخمس
+ * الإطارات همودًا، ومستوى الكلام من أعلاها (بترك ذروة الانفجارات)، وتُؤخذ
+ * العتبة أبعدَ الحدّين عن الأرضية — فتعمل مع تسجيلٍ كثيرِ السكتات وآخرَ متصلٍ.
+ */
+export function vadThreshold(energy: Float32Array): { thr: number; noiseFloor: number; speechLevel: number } {
+  const n = energy.length;
+  if (!n) return { thr: 1e-5, noiseFloor: 0, speechLevel: 0 };
+  const sorted = Float64Array.from(energy).sort();
+  const avg = (a: number, b: number) => {
+    const lo = Math.max(0, Math.floor(a));
+    const hi = Math.min(n, Math.max(lo + 1, Math.ceil(b)));
+    let s = 0;
+    for (let i = lo; i < hi; i++) s += sorted[i];
+    return s / (hi - lo);
+  };
+  const noiseFloor = avg(0, n * 0.05);
+  const speechLevel = avg(n * 0.7, n * 0.95);
+  const thr = Math.max(noiseFloor * 3, speechLevel * 0.15, 1e-5);
+  return { thr, noiseFloor, speechLevel };
+}
+
 /* ------------------------------------------------------------------ */
 
 /**
- * Given a midpoint per word (from any engine), refine start/end to the
- * actual voiced span around each midpoint using a per-word local energy
- * threshold (hysteresis: tolerate a 1-frame dip inside a word).
+ * Given a midpoint per word (from any engine), refine start/end to the actual
+ * voiced span around that midpoint.
+ *
+ * Three things this must get right, because the whole verdict rests on them:
+ *  1. The voiced/unvoiced threshold comes from the **recording's** speech level,
+ *     not from the peak inside the word's own window. A madd tail decays well
+ *     below the word's onset peak, so a local-peak threshold silently amputates
+ *     exactly the part the learner is being asked to hold.
+ *  2. A word may never be limited by its own expected duration — that would make
+ *     the measurement circular (the model would grade itself). The search window
+ *     is bounded by the neighbouring midpoints, widened by the prior.
+ *  3. Overlapping spans are cut at the **quietest frame** between them, never at
+ *     an arbitrary halfway point, and never in a way that inverts a span (which
+ *     used to collapse real words to 20 ms and report them as "not heard").
  */
-function computeWordSpans(
+export function computeWordSpans(
   energy: Float32Array,
   midsMs: number[],
   expectedMs: number[],
   durationMs: number,
 ): { startMs: number; endMs: number }[] {
-  const frameMs = 40;
+  const frameMs = FRAME_MS;
   const n = energy.length;
   const out: { startMs: number; endMs: number }[] = [];
+  if (!n) return midsMs.map((m) => ({ startMs: m, endMs: m }));
+
+  // speech level & noise floor over the whole envelope
+  const { thr } = vadThreshold(energy);
+  const DIP = 3; // frames of momentary dip tolerated inside a word (~60 ms)
+
+  const frameOf = (ms: number) => Math.max(0, Math.min(n - 1, Math.round(ms / frameMs)));
 
   for (let i = 0; i < midsMs.length; i++) {
-    const midF = Math.max(0, Math.min(n - 1, Math.round(midsMs[i] / frameMs)));
-    const maxHalf = Math.max(3, Math.round((expectedMs[i] * 1.8) / frameMs));
+    const midF = frameOf(midsMs[i]);
+    // search window: towards the neighbouring midpoints, widened by the prior
+    const priorHalf = Math.max(4, Math.round((expectedMs[i] * 1.2) / frameMs));
+    const lo = Math.max(0, Math.min(i > 0 ? frameOf(midsMs[i - 1]) : 0, midF - priorHalf));
+    const hi = Math.min(n - 1, Math.max(i < midsMs.length - 1 ? frameOf(midsMs[i + 1]) : n - 1, midF + priorHalf));
 
-    let peakV = 0;
-    const lo0 = Math.max(0, midF - maxHalf);
-    const hi0 = Math.min(n, midF + maxHalf + 1);
-    for (let f = lo0; f < hi0; f++) peakV = Math.max(peakV, energy[f]);
-    const thr = Math.max(peakV * 0.3, 1e-5);
-
-    // walk back
+    // walk back to the last frame above threshold, tolerating short dips
     let s = midF;
     let dip = 0;
-    while (s > 0 && midF - s < maxHalf) {
-      if (energy[s - 1] >= thr) dip = 0;
-      else if (++dip >= 2) break;
+    let lastVoiced = energy[midF] >= thr ? midF : -1;
+    while (s > lo) {
       s--;
+      if (energy[s] >= thr) {
+        lastVoiced = s;
+        dip = 0;
+      } else if (++dip > DIP) break;
     }
     // walk forward
     let e = midF;
     dip = 0;
-    while (e < n - 1 && e - midF < maxHalf) {
-      if (energy[e + 1] >= thr) dip = 0;
-      else if (++dip >= 2) break;
+    while (e < hi) {
       e++;
+      if (energy[e] >= thr) {
+        lastVoiced = Math.max(lastVoiced, e);
+        dip = 0;
+      } else if (++dip > DIP) break;
     }
 
-    let startMs = s * frameMs;
-    let endMs = (e + 1) * frameMs;
-    if (endMs - startMs < 80) {
-      // degenerate (silence around midpoint) → fall back to expected half-width
-      startMs = Math.max(0, midsMs[i] - expectedMs[i] / 2);
-      endMs = Math.min(durationMs, midsMs[i] + expectedMs[i] / 2);
+    if (lastVoiced < 0 || (lastVoiced - s + 1) * frameMs < MIN_VOICED_MS) {
+      // nothing voiced around this midpoint → honest "not heard", no invented span
+      out.push({ startMs: midsMs[i], endMs: midsMs[i] });
+      continue;
     }
-    out.push({ startMs, endMs });
+    out.push({ startMs: s * frameMs, endMs: (lastVoiced + 1) * frameMs });
   }
 
-  // enforce monotonic non-overlap boundaries
+  // Resolve overlaps at the quietest frame between the two words. Guarantees
+  // monotonic, non-inverted spans.
   for (let i = 1; i < out.length; i++) {
-    if (out[i].startMs < out[i - 1].endMs) {
-      const m = (out[i].startMs + out[i - 1].endMs) / 2;
-      out[i - 1].endMs = m;
-      out[i].startMs = m;
+    const a = out[i - 1];
+    const b = out[i];
+    if (b.startMs >= a.endMs) continue;
+    const loBound = a.startMs + MIN_SPAN_MS;
+    const hiBound = b.endMs - MIN_SPAN_MS;
+    if (loBound > hiBound) {
+      // both words shorter than the minimum together → split by expected weight
+      const wA = Math.max(1, expectedMs[i - 1]);
+      const wB = Math.max(1, expectedMs[i]);
+      const cut = a.startMs + (b.endMs - a.startMs) * (wA / (wA + wB));
+      a.endMs = cut;
+      b.startMs = cut;
+      continue;
     }
+    // الحدّ يُبحث عنه قرب منتصف المسافة بين منتصفي الكلمتين (وهو أفضل ما لدى
+    // محرك المحاذاة)، ولا يُترك حرًّا في كل منطقة التداخل: فحين تتصل التلاوة
+    // بلا سكتات يكون ملفّ الطاقة شبه مستوٍ، وأهدأ إطارٍ فيه قد يقع في أيّ
+    // موضع — وقد كان ذلك يطوي كلمةً كاملة إلى ٤٠ م.ث فيحكمها «لم تُسمع».
+    const prior = (midsMs[i - 1] + midsMs[i]) / 2;
+    const reach = Math.max(MIN_SPAN_MS, (midsMs[i] - midsMs[i - 1]) * 0.35);
+    const f0 = Math.max(0, Math.round(Math.max(loBound, prior - reach) / frameMs));
+    const f1 = Math.min(n - 1, Math.round(Math.min(hiBound, prior + reach) / frameMs));
+    let cutF = Math.round(prior / frameMs);
+    let best = Infinity;
+    for (let f = f0; f <= f1; f++) {
+      if (energy[f] < best) {
+        best = energy[f];
+        cutF = f;
+      }
+    }
+    const cut = Math.max(loBound, Math.min(hiBound, cutF * frameMs));
+    a.endMs = cut;
+    b.startMs = cut;
   }
-  if (out.length) {
-    out[0].startMs = Math.max(0, Math.min(out[0].startMs, 120));
-    out[out.length - 1].endMs = Math.min(durationMs, Math.max(out[out.length - 1].endMs, out[out.length - 1].startMs + 80));
+
+  if (out.length) out[0].startMs = Math.max(0, Math.min(out[0].startMs, 120));
+  for (const o of out) {
+    o.startMs = Math.max(0, Math.min(durationMs, o.startMs));
+    o.endMs = Math.max(o.startMs, Math.min(durationMs, o.endMs));
   }
   return out;
 }
@@ -284,7 +383,7 @@ function attentionToWords(
   energy: Float32Array,
   durationMs: number,
 ): { midMs: number; conf: number }[] {
-  const frameMs = 40;
+  const frameMs = FRAME_MS;
   const Ntok = fa.rows.length - 1; // drop final row (SOT shift)
   const mids: number[] = [];
   const confs: number[] = [];
@@ -423,51 +522,203 @@ function lcsPairs(p: string[], t: string[]): [number, number][] {
   return pairs;
 }
 
+/** مقاطع الصوت المتصلة (VAD): تُدمج الفجوات القصيرة وتُهمل النُبَذ الضئيلة */
+export function voicedRuns(
+  energy: Float32Array,
+  thr: number,
+  mergeGapFrames = 5,
+  minRunFrames = 2,
+): { from: number; to: number }[] {
+  const n = energy.length;
+  const runs: { from: number; to: number }[] = [];
+  let cur: { from: number; to: number } | null = null;
+  let gap = 0;
+  for (let f = 0; f < n; f++) {
+    if (energy[f] >= thr) {
+      if (cur) cur.to = f;
+      else cur = { from: f, to: f };
+      gap = 0;
+    } else if (cur) {
+      if (++gap > mergeGapFrames) {
+        runs.push(cur);
+        cur = null;
+        gap = 0;
+      }
+    }
+  }
+  if (cur) runs.push(cur);
+  return runs.filter((r) => r.to - r.from + 1 >= minRunFrames);
+}
+
 /**
- * Fallback forced alignment: VAD on the 40ms energy envelope, duration priors
- * from the tajweed model, sequential peak-snapped frame allocation (DTW-style).
+ * Fallback forced alignment (no AI): VAD on the energy envelope, then the voiced
+ * frames are split between the target words **in proportion to the tajweed
+ * duration priors**, monotonically and without a moving cursor.
+ *
+ * The previous version hunted for the loudest frame inside a sliding window and
+ * advanced a cursor past it. One word that grabbed a neighbour's peak pushed
+ * every following word further off, so the last words of an ayah regularly ended
+ * up beyond the end of the recording and were reported as "not heard" — the
+ * learner was blamed for words the engine had simply lost. Proportional
+ * allocation on the voiced timeline cannot drift: each word's share is fixed by
+ * the priors, and the mapping back to real time is monotonic by construction.
  */
-function energyForcedAlignment(
+export function energyForcedAlignment(
   tjs: WordTajweed[],
   energy: Float32Array,
   durationMs: number,
 ): { midMs: number; conf: number }[] {
-  const frameMs = 40;
+  const frameMs = FRAME_MS;
   const n = energy.length;
-  if (!n) return tjs.map((_, i) => ({ midMs: (i / Math.max(1, tjs.length)) * durationMs, conf: 0.2 }));
+  const N = tjs.length;
+  if (!n || !N) return tjs.map((_, i) => ({ midMs: (i / Math.max(1, N)) * durationMs, conf: 0.2 }));
 
-  let meanV = 0;
-  for (const v of energy) meanV += v;
-  meanV /= n;
-  let varV = 0;
-  for (const v of energy) varV += (v - meanV) * (v - meanV);
-  const std = Math.sqrt(varV / n);
-  const thr = meanV + 0.3 * std;
+  const { thr, speechLevel } = vadThreshold(energy);
 
-  let activeFrames = 0;
-  for (const v of energy) if (v > thr) activeFrames++;
-  if (activeFrames < tjs.length) activeFrames = tjs.length;
+  const runs = voicedRuns(energy, thr, 3);
+  if (!runs.length) return tjs.map((_, i) => ({ midMs: ((i + 0.5) / N) * durationMs, conf: 0.15 }));
 
-  const expFrames = tjs.map((t) => Math.max(2, t.expectedMs / frameMs));
-  const totalExp = expFrames.reduce((a, b) => a + b, 0);
-  const scale = activeFrames / totalExp;
-  const alloc = expFrames.map((f) => Math.max(1, Math.round(f * scale)));
+  const timeOf = (f: number) => f * frameMs + frameMs / 2;
+  const peakConf = speechLevel > 0 ? clamp((Math.max(...Array.from(energy)) - thr) / (2 * speechLevel) + 0.45, 0.15, 0.9) : 0.3;
+
+  // ١) مقاطع الصوت أكثر من الكلمات أو تساويها → إسناد monotonic أمثل:
+  //    كل كلمة تأخذ مجموعةً متصلة من المقاطع، ويُختار التقسيم الذي تُقارب فيه
+  //    الأزمنةُ المقاسة أزمنةَ النموذج. هذا يمنع الانزياح التراكميّ الذي كان
+  //    يفقد الكلمات في أواخر الآية.
+  if (runs.length >= N && runs.length * runs.length * N <= 4_000_000) {
+    const fit = matchRunsToWords(runs, tjs.map((t) => Math.max(1, t.expectedMs)), frameMs);
+    if (fit) {
+      return fit.map((f) => ({ midMs: f.midMs, conf: clamp(peakConf + 0.08 - f.penalty, 0.15, 0.95) }));
+    }
+  }
+
+  // ٢) خلاف ذلك: توزيع إطارات الصوت على الكلمات بأوزان الأزمنة المتوقَّعة
+  const voicedFrames: number[] = [];
+  for (const r of runs) for (let f = r.from; f <= r.to; f++) voicedFrames.push(f);
+  const V = voicedFrames.length;
+  const weights = tjs.map((t) => Math.max(1, t.expectedMs));
+  const totalW = weights.reduce((a, b) => a + b, 0);
+
+  // حدود الكلمات على خطّ الصوت (بالإطارات الصوتية) — تراكمية، فلا انزياح
+  const bounds: number[] = [0];
+  let acc = 0;
+  for (let i = 0; i < N; i++) {
+    acc += weights[i];
+    bounds.push(i === N - 1 ? V : Math.min(V, Math.round((acc / totalW) * V)));
+  }
+  for (let i = 1; i <= N; i++) if (bounds[i] < bounds[i - 1]) bounds[i] = bounds[i - 1];
+
+  // ملاءمة الحدود: إن كان الحدّ قريبًا من سكتةٍ حقيقية فليُسنَد إليها
+  const gaps: number[] = [];
+  for (let k = 1; k < runs.length; k++) gaps.push(Math.round((runs[k - 1].to + runs[k].from) / 2));
+  const gapIdx = gaps.map((g) => voicedFrames.findIndex((f) => f >= g));
 
   const out: { midMs: number; conf: number }[] = [];
-  let cursor = 0;
-  for (let w = 0; w < tjs.length; w++) {
-    const win = Math.max(3, alloc[w]);
-    const from = Math.min(cursor, n - 1);
-    const to = Math.min(n, from + win * 3);
-    let peak = from;
-    let pv = -1;
-    for (let i = from; i < to; i++) if (energy[i] > pv) {
-      pv = energy[i];
-      peak = i;
+  for (let i = 0; i < N; i++) {
+    let a = bounds[i];
+    let b = bounds[i + 1];
+    const idealSpan = (weights[i] / totalW) * V;
+    for (const gi of gapIdx) {
+      if (gi <= 0) continue;
+      if (Math.abs(gi - a) <= idealSpan * 0.35 && Math.abs(gi - a) < Math.abs(nearestGap(gapIdx, a) - a)) a = gi;
+      if (Math.abs(gi - b) <= idealSpan * 0.35 && Math.abs(gi - b) < Math.abs(nearestGap(gapIdx, b) - b)) b = gi;
     }
-    const peakConf = std > 0 ? clamp((pv - thr) / (2 * std) + 0.45, 0.15, 0.9) : 0.3;
-    out.push({ midMs: peak * frameMs + frameMs / 2, conf: peakConf });
-    cursor = Math.min(n - 1, Math.max(cursor + 1, peak + Math.max(1, Math.floor(win / 2))));
+    if (b <= a) b = Math.min(V, a + Math.max(1, Math.round(idealSpan)));
+    const midV = Math.min(V - 1, Math.max(0, Math.floor((a + b) / 2)));
+    const midF = voicedFrames[midV] ?? Math.round((timeOf(a) / frameMs));
+    const runCount = runs.filter((r) => voicedFrames[a] >= r.from && voicedFrames[a] <= r.to).length;
+    out.push({
+      midMs: timeOf(midF),
+      conf: clamp(peakConf * (runs.length === N ? 1 : 0.85) - (runCount ? 0 : 0.05), 0.15, 0.9),
+    });
   }
   return out;
+}
+
+/**
+ * إسناد مقاطع الصوت إلى الكلمات: تقسيمٌ monotonic للمقاطع على الكلمات يقلّل
+ * مجموع الفروق النسبية بين زمن كل كلمة وزمنها المتوقَّع. يضمن أن كل كلمة
+ * تنال مقطعًا واحدًا على الأقل، فلا تبتلع كلمةٌ جارتَها ولا تضيع كلمةٌ في
+ * آخر الآية.
+ */
+function matchRunsToWords(
+  runs: { from: number; to: number }[],
+  expectedMs: number[],
+  frameMs: number,
+): { midMs: number; penalty: number }[] | null {
+  const R = runs.length;
+  const N = expectedMs.length;
+  if (R < N) return null;
+
+  // زمن كل مقطع ومركزه الزمنيّ
+  const dur = runs.map((r) => (r.to - r.from + 1) * frameMs);
+  // مجموع أزمنة المقاطع k..j-1
+  const pre = new Float64Array(R + 1);
+  for (let i = 0; i < R; i++) pre[i + 1] = pre[i] + dur[i];
+  const sumRuns = (k: number, j: number) => pre[j] - pre[k];
+
+  const INF = Infinity;
+  const dp: number[][] = Array.from({ length: N + 1 }, () => new Array<number>(R + 1).fill(INF));
+  const back: number[][] = Array.from({ length: N + 1 }, () => new Array<number>(R + 1).fill(-1));
+  dp[0][0] = 0;
+  for (let i = 1; i <= N; i++) {
+    for (let j = i; j <= R - (N - i); j++) {
+      let best = INF;
+      let bk = -1;
+      for (let k = i - 1; k < j; k++) {
+        if (dp[i - 1][k] === INF) continue;
+        const c = dp[i - 1][k] + Math.abs(sumRuns(k, j) - expectedMs[i - 1]) / expectedMs[i - 1];
+        if (c < best) {
+          best = c;
+          bk = k;
+        }
+      }
+      dp[i][j] = best;
+      back[i][j] = bk;
+    }
+  }
+  if (dp[N][R] === INF) return null;
+
+  // استرجاع التقسيم
+  const bounds: number[] = new Array(N + 1);
+  bounds[N] = R;
+  for (let i = N; i >= 1; i--) bounds[i - 1] = back[i][bounds[i]];
+
+  const out: { midMs: number; penalty: number }[] = [];
+  for (let i = 0; i < N; i++) {
+    const k = bounds[i];
+    const j = bounds[i + 1];
+    if (j <= k) return null;
+    // مركز الزمن المصوت داخل مقاطع هذه الكلمة
+    let voiced = 0;
+    for (let x = k; x < j; x++) voiced += dur[x];
+    let acc = 0;
+    let midF = runs[k].from;
+    for (let x = k; x < j; x++) {
+      if (acc + dur[x] >= voiced / 2) {
+        const inside = (voiced / 2 - acc) / frameMs;
+        midF = runs[x].from + Math.min(runs[x].to - runs[x].from, Math.max(0, Math.round(inside)));
+        break;
+      }
+      acc += dur[x];
+    }
+    const penalty = Math.min(0.35, Math.abs(voiced - expectedMs[i]) / (2 * expectedMs[i]));
+    out.push({ midMs: midF * frameMs + frameMs / 2, penalty });
+  }
+  return out;
+}
+
+/** أقرب حدّ سكتةٍ إلى موضعٍ على خطّ الصوت */
+function nearestGap(gapIdx: number[], at: number): number {
+  let best = -1;
+  let bd = Infinity;
+  for (const g of gapIdx) {
+    if (g < 0) continue;
+    const d = Math.abs(g - at);
+    if (d < bd) {
+      bd = d;
+      best = g;
+    }
+  }
+  return best < 0 ? at : best;
 }

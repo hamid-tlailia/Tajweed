@@ -26,7 +26,9 @@ const surahCache = new Map<number, SurahData>();
 const fileProgress = new Map<string, number>();
 const PROGRESS_KEY = 'tahqiq-progress-v1';
 const SETTINGS_KEY = 'tahqiq-settings-v1';
-const REF_KEY = 'tahqiq-ref-v1';
+// v2: أُعيد بناء محرّك قياس أزمنة الكلمات، فأزمنةُ القارئ المرجعي المخزَّنة
+// بالإصدار الأول مقاسة بقياسٍ مُنحرف — تُهمَل لئلا يُحاكَم القارئ إليها.
+const REF_KEY = 'tahqiq-ref-v2';
 
 function loadProgress(): Record<string, Record<number, AyahRecord>> {
   if (typeof window === 'undefined') return {};

@@ -167,6 +167,12 @@ export interface AlignmentResult {
   audioUrl: string | null;
   samples: Float32Array | null;
   tempo: Tempo;
+  /**
+   * سرعة القارئ الفعلية نسبةً إلى مرتبته المختارة (وسيط نِسَب أزمنة كلماته).
+   * تُضرب فيها أزمنة النموذج قبل الحكم، فلا يُعاقَب القارئ على مرتبته بل على
+   * خروجه عن نسق الأحكام داخل تلاوته.
+   */
+  tempoScale: number;
   tips: CoachTip[];
   summary: string;
   passed: boolean;

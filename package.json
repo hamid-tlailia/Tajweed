@@ -11,7 +11,9 @@
     "icons": "node scripts/make-icons.mjs",
     "test:rules": "tsx scripts/test-tajweed.ts",
     "test:live": "tsx scripts/test-live.ts",
-    "test:compare": "tsx scripts/test-compare.ts"
+    "test:compare": "tsx scripts/test-compare.ts",
+    "test:score": "tsx scripts/test-score.ts",
+    "bench:timing": "tsx scripts/bench-timing.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
