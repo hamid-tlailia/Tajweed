@@ -211,7 +211,7 @@ async function main() {
     }
     {
       // القرّاء المعتمدون يمطّون اللازم فوق الستّ: السديس نحو ٦٫٧ ث، والحصري نحو ٩٫٩ ث
-      const a = await judge(d2, 1, [6700], 'hadr', refFor('hadr'));
+      const a = await judge(d2, 1, [6700], 'hadr', { id: 'sudais', name: 'عبد الرحمن السديس', pace: 0.65 });
       check('الٓمٓ بمطّ السديس (٦٫٧ ث حدرًا) لا تُحكم طويلة', ['ok', 'excellent'].includes(a.res.words[0].status), `${a.res.words[0].status} · ${a.res.overallScore}%`);
       const b = await judge(d2, 1, [9900], 'tartil', refFor('tartil'));
       check('الٓمٓ بمطّ الحصري (٩٫٩ ث ترتيلًا) لا تُحكم طويلة', ['ok', 'excellent'].includes(b.res.words[0].status), `${b.res.words[0].status} · ${b.res.overallScore}%`);

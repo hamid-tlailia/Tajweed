@@ -23,7 +23,8 @@ export type AppTab = 'practice' | 'settings' | 'result' | 'progress';
 export const PASS_SCORE = 70;
 
 /** كلمة في الجلسة الحية: حكمها اللحظي أثناء القراءة */
-export type LiveWordStatus = WordStatus | 'pending' | 'current';
+/** read: تقدّم عليها الضوء (انتهى صوتها) وحكمُها قيد التريّث */
+export type LiveWordStatus = WordStatus | 'pending' | 'current' | 'read';
 
 export interface LiveWordResult {
   index: number;
@@ -50,7 +51,8 @@ export interface LiveSnapshot {
   okCount: number;
   /** كم كلمة تقدّم بها الضوء على تقدير النموذج (بلا سكتةٍ ولا انخفاض صوت) */
   estimatedCount: number;
-  words: { status: LiveWordStatus; measuredMs: number; boundary?: string }[];
+  /** لكل كلمة: حالتها وزمنها المقيس، ومقدارها ونافذة أوجهها بعدلة السرعة الجارية (لشريطها تحتها) */
+  words: { status: LiveWordStatus; measuredMs: number; boundary?: string; expectedMs?: number; minMs?: number; maxMs?: number }[];
   currentVoicedMs: number;
   currentExpectedMs: number;
   /** نافذة الأوجه الجائزة للكلمة الجارية (قصْر/توسّط/إشباع حيث جازت) */
@@ -212,6 +214,12 @@ export interface WordAlignment {
   confidence: number; // 0..1
   status: WordStatus;
   tajweed: WordTajweed;
+  /**
+   * هل تبيّن لفظُ الكلمة في المسموع (بالسماع الذكي)؟ false: استمع فلم يسمعها
+   * (أُسقطت أو أُبدلت، أو المقروء ليس الآية) — فلا يُحكم على زمنها «جيدًا».
+   * غيرُ معرَّف: لم يُستمع بالألفاظ (نتيجةٌ لحظية) أو عرضٌ تجريبي.
+   */
+  textHeard?: boolean;
 }
 
 export interface CoachTip {

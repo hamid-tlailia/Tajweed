@@ -477,6 +477,66 @@ console.log('\n──── الكلمة الأخيرة: الإيقاف أثنا
   check('الٓمٓ حيًّا بمقدارها (٣٫١ ث): لا تُخطَّأ', ['ok', 'excellent'].includes(say(3100)), say(3100));
 }
 
+/* ================================================================== */
+/* الضوء يسير مع القارئ: لا يتخلّف كلمةً ثم يقفز، ولا يسبقه              */
+/* ================================================================== */
+console.log('\n──── الضوء مع القارئ لحظةً بلحظة ────');
+{
+  const SW = ['ٱلۡحَمۡدُ', 'لِلَّهِ', 'رَبِّ', 'ٱلۡعَـٰلَمِينَ', 'ٱلرَّحۡمَـٰنِ', 'ٱلرَّحِيمِ', 'مَـٰلِكِ', 'یَوۡمِ', 'ٱلدِّینِ'];
+  const stj = analyzeWords(SW, 'hafs', 'tartil');
+  for (const [gap, pace] of [[45, 1], [0, 1], [140, 1], [45, 0.75], [45, 1.3]] as const) {
+    const trk = new LiveTajweedTracker(stj, SW.map((w) => ({ word: w })), 0.8);
+    let tt = 0;
+    let on = 0;
+    let ahead = 0;
+    let total = 0;
+    const feedS = (rms: number, ms: number, truth: number | null) => {
+      for (let i = 0; i < Math.max(1, Math.round(ms / 10)); i++, tt += 10) {
+        trk.feed(rms, tt);
+        if (truth != null && tt % 50 === 0) {
+          const c = trk.snapshot().cursor;
+          total++;
+          if (c === truth) on++;
+          else if (c > truth) ahead++;
+        }
+      }
+    };
+    feedS(0.0005, 300, null);
+    stj.forEach((tj, w) => {
+      const D = tj.expectedMs * pace;
+      const syl = Math.max(2, Math.round(D / 260));
+      for (let sI = 0; sI < syl; sI++) {
+        const steps = Math.max(1, Math.round(D / syl / 10));
+        for (let k = 0; k < steps; k++) {
+          const p = k / steps;
+          const hump = 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, p * 1.15));
+          const edge = sI === syl - 1 && p > 0.72 ? 1 - ((p - 0.72) / 0.28) * 0.68 : 1;
+          feedS(Math.max(0.002, 0.42 * hump * edge), 10, w);
+        }
+      }
+      if (gap > 0) feedS(0.0008, gap, null);
+    });
+    // (كان الضوء مربوطًا بالمُبتَّت فيتخلّف كلمةً في نحو ٩٠٪ من الوقت)
+    check(
+      `[سكتة ${gap} · سرعة ×${pace}] الضوء على الكلمة المقروءة ≥ ٩٠٪ من الوقت ولا يسبقها`,
+      on / total >= 0.9 && ahead / total <= 0.03,
+      `على الكلمة ${Math.round((100 * on) / total)}% · متقدّم ${Math.round((100 * ahead) / total)}%`,
+    );
+  }
+
+  // السماع الذكي أثبت كلماتٍ قُرئت: لا يتخلّف الضوء عنها
+  const trk = new LiveTajweedTracker(stj, SW.map((w) => ({ word: w })), 0.8);
+  let tt = 0;
+  for (let i = 0; i < 30; i++, tt += 10) trk.feed(0.0005, tt);
+  for (let i = 0; i < 300; i++, tt += 10) trk.feed(0.3, tt); // صوتٌ متصل بلا حدّ
+  const before = trk.snapshot().cursor;
+  trk.noteHeard(3);
+  check('السماع الذكي يرفع الضوء إلى ما ثبت أنه قُرئ', before < 3 && trk.snapshot().cursor === 3, `${before} ← ${trk.snapshot().cursor}`);
+  const sn = trk.snapshot();
+  check('الكلمات المتجاوَزة بلا حكمٍ بعد تُعرض «قُرئت»', sn.words.slice(0, 3).every((w) => w.status === 'read' || w.status === 'ok' || w.status === 'excellent' || w.status === 'short' || w.status === 'long'), sn.words.slice(0, 3).map((w) => w.status).join('،'));
+  check('لكل كلمة مقدارها ونافذتها (لخطّها تحتها)', sn.words.every((w) => (w.expectedMs ?? 0) > 0 && (w.maxMs ?? 0) >= (w.minMs ?? 0)));
+}
+
 if (fails) {
   console.error(`\nFAILED: ${fails}`);
   process.exit(1);

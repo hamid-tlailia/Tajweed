@@ -280,6 +280,15 @@ async function pipeline() {
     /لم يتبيّن فيه لفظٌ/.test(textGateMessage({ textCheck: 'weak', heardNothing: true }, 0, 1) ?? ''),
   );
 
+  // كلمةٌ لم يُسمع لفظُها لا يُنصح في زمنها ولا تُعدّ «جيدة»
+  {
+    const tj = analyzeWords(['ٱلۡكِتَـٰبُ'], 'hafs', 'hadr')[0];
+    const w = { index: 0, ayah: 2, word: 'ٱلۡكِتَـٰبُ', startMs: 0, endMs: 200, confidence: 0.4, status: 'short', tajweed: tj } as WordAlignment;
+    const heard = buildCoach([w], 40, 1, 'transcript', 1, { textCheck: 'ok' });
+    const unheard = buildCoach([{ ...w, textHeard: false }], 25, 0, 'transcript', 1, { textCheck: 'weak', heardNothing: true });
+    check('كلمةٌ لم يُسمع لفظُها: لا نصيحة في زمنها', heard.tips.length === 1 && unheard.tips.length === 0 && !/ابدأ بإصلاح/.test(unheard.summary), unheard.summary.slice(0, 80));
+  }
+
   // النتيجة اللحظية: صوتٌ كثيرٌ خارج كلمات الآية يُنبَّه إليه
   {
     const t21 = buildTarget(surah(2), 'ayah', 1);

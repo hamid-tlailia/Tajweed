@@ -252,6 +252,18 @@ export default function RecorderPanel() {
         const heardText = st.heard.join(' ');
         const sc = scoreTranscriptMatch(heardText, sess.text);
         const heardN = sc.predWords.filter((w) => !w.prefix).length;
+        // الضوء لا يتخلّف عمّا أثبت السماعُ أنه قُرئ: آخرُ كلمةٍ من الآية سُمعت
+        // (بالترتيب) وقد سُمع قبلها معظمُ ما قبلها — فلا تقفز به كلمةٌ مكرَّرة شاردة
+        {
+          let hits = 0;
+          let upTo = 0;
+          sc.targetHit.forEach((hit, j) => {
+            if (!hit) return;
+            hits++;
+            if (hits >= 0.6 * (j + 1)) upTo = j + 1;
+          });
+          if (upTo) tracker.noteHeard(upTo);
+        }
         // ابتدأ القارئ بالبسملة وليست من الآية: تُقدَّم على كلمات المرافقة وتُعاد المطابقة
         if (sc.basmalaPrefix && !st.rebased) {
           st.rebased = true;

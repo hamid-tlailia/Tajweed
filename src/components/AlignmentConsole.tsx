@@ -37,8 +37,9 @@ function expectedLabel(tj: { expectedMs: number; minMs?: number; maxMs?: number 
   return hi > lo * 1.12 ? `${fmtSec(lo)}–${fmtSec(hi)}` : fmtSec(tj.expectedMs);
 }
 
-function cardTone(status: string, active: boolean): string {
+function cardTone(status: string, active: boolean, unheard = false): string {
   const ring = active ? 'ring-2 ring-gold-400 shadow-[0_0_18px_rgba(212,175,55,0.28)]' : '';
+  if (unheard) return `border-line bg-ink-850/60 opacity-80 ${ring}`;
   if (status === 'excellent' || status === 'ok') return `border-mint-500/50 bg-mint-500/10 ${ring}`;
   if (status === 'short' || status === 'long') return `border-warn-500/55 bg-warn-500/10 shake-error ${ring}`;
   if (status === 'silent') return `border-danger-500/55 bg-danger-500/10 pulse-miss ${ring}`;
@@ -174,7 +175,7 @@ export default function AlignmentConsole() {
       lastIdxRef.current = idx;
       setActiveWord(idx);
       const w = idx >= 0 ? result.words[idx] : null;
-      if (w && alertOn && (w.status === 'short' || w.status === 'long' || w.status === 'silent')) {
+      if (w && alertOn && w.textHeard !== false && (w.status === 'short' || w.status === 'long' || w.status === 'silent')) {
         wordViolation(w.status);
       }
     }
@@ -513,13 +514,13 @@ export default function AlignmentConsole() {
           const newAyah = i === 0 || result.words[i].ayah !== result.words[i - 1].ayah;
           const tip = tipByIndex.get(w.index);
           return (
-            <div key={i} className={`rounded-xl border p-3 transition-colors ${cardTone(w.status, activeWord === i)}`}>
+            <div key={i} className={`rounded-xl border p-3 transition-colors ${cardTone(w.status, activeWord === i, w.textHeard === false)}`}>
               <div className="flex items-start justify-between gap-2">
                 <span className="min-w-0">
                   <span className="font-quran text-xl leading-tight text-gold-100">{w.word}</span>
                   {newAyah ? <span className="ms-2 font-brand text-[9px] text-slate-500">آية {w.ayah}</span> : null}
                 </span>
-                <StatusBadge status={w.status} />
+                <StatusBadge status={w.status} unheard={w.textHeard === false} />
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
                 <span className="font-brand" dir="ltr">
@@ -533,6 +534,11 @@ export default function AlignmentConsole() {
                   كلمة {i + 1} من {result.words.length}
                 </span>
               </div>
+              {w.textHeard === false ? (
+                <p className="mt-2 text-[10.5px] leading-relaxed text-slate-500">
+                  لم يتبيّن لفظُ هذه الكلمة في تلاوتك، فلا يُحكم على زمنها.
+                </p>
+              ) : null}
               {tip ? <p className="mt-2 rounded-lg bg-ink-950/40 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200">{tip.action}</p> : null}
               <div className="mt-2">
                 <RuleBadges rules={w.tajweed.rules} max={4} />
@@ -613,7 +619,7 @@ export default function AlignmentConsole() {
                   </div>
                 </td>
                 <td className="px-3 py-2">
-                  <StatusBadge status={w.status} />
+                  <StatusBadge status={w.status} unheard={w.textHeard === false} />
                   {(() => {
                     const rc = result.reciter?.perWord[i];
                     if (!rc || !rc.dir || rc.dir === 'ok') return null;
