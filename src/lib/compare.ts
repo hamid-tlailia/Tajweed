@@ -9,7 +9,7 @@
 // قياسٌ إلى صوتٍ معتمدٍ لا إلى نموذجٍ نظري وحده.
 
 import { tauTolerance } from './tajweed';
-import type { RefAlignment, ReciterCompare, ReciterWordCompare, WordAlignment } from './types';
+import type { RefAlignment, ReciterCompare, ReciterWordCompare, TextCheck, WordAlignment } from './types';
 import { PASS_SCORE } from './types';
 import { clamp, mean, median } from './util';
 
@@ -25,6 +25,7 @@ export function compareWithReciter(
   tau: number,
   textOk: boolean,
   refLabel?: string,
+  textCheck?: TextCheck,
 ): ReciterCompare | null {
   if (!userWords.length || userWords.length !== ref.words.length) return null;
 
@@ -55,9 +56,14 @@ export function compareWithReciter(
   let note: string | undefined;
 
   if (!textOk) {
-    // ما سُمع من الألفاظ بعيد عن الآية — لا يُجيز التوقيتُ وحده
+    // ما سُمع من الألفاظ بعيد عن الآية (أو لم يُسمع بعد) — لا يُجيز التوقيتُ وحده
     matchPct = Math.min(matchPct, 45);
-    note = 'ما سُمع من الألفاظ ابتعد عن نصّ الآية، فخُفّضت المطابقة — تأكّد أنك تقرأ الآية المختارة.';
+    note =
+      textCheck === 'unverified'
+        ? 'لم يُتحقَّق من نصّ التلاوة بعد، فلا تُعتمد مطابقة القارئ للاجتياز حتى يستكملها السماع الذكي.'
+        : textCheck === 'weak'
+          ? 'تبيّن بعضُ نصّ الآية فقط، فخُفّضت المطابقة — اقرأ الآية كاملةً بوضوح.'
+          : 'ما سُمع من الألفاظ ليس نصَّ الآية، فخُفّضت المطابقة — تأكّد أنك تقرأ الآية المختارة.';
   } else if (scale < 0.55 || scale > 1.9) {
     note = `سرعتك بعيدة عن سرعة القارئ (≈${scale.toFixed(2)}×) — قُورنت الأزمنة بعدلة السرعة، ويُستحسن الاقتراب من مرتبته.`;
   }

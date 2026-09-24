@@ -63,6 +63,31 @@ export interface LiveSnapshot {
   /** كيف أُقفلت آخر كلمة: سكتة/انخفاض/تقدير نموذج/تجاوز */
   lastBoundary: 'gap' | 'dip' | 'model' | 'timeout' | null;
   finished: boolean;
+  /** مجموع الزمن المصوّت منذ البدء (م.ث) */
+  voicedMs: number;
+  /** جُمّدت المرافقة: تبيّن أن المقروء ليس نصّ الآية */
+  frozen: boolean;
+  /** القارئ في البسملة التي ابتدأ بها قبل الآية (ليست من الآية ولا تُحسب) */
+  inPrefix: boolean;
+}
+
+/**
+ * التحقّق اللحظي من النصّ أثناء المرافقة الحية (بالسماع الذكي في الخلفية):
+ *   off        السماع الذكي غير جاهز — يُتحقَّق بعد الإيقاف
+ *   checking   لم يُسمع بعدُ ما يكفي للحكم
+ *   same       ما سُمع حتى الآن من هذه الآية
+ *   unsure     بين بين (سماعٌ مضطرب)
+ *   warn       ما سُمع لا يشبه الآية — إنذارٌ أول
+ *   other      تأكّد: المقروء ليس نصّ الآية — جُمّدت المرافقة
+ */
+export interface LiveTextCheck {
+  status: 'off' | 'checking' | 'same' | 'unsure' | 'warn' | 'other';
+  /** عدد الكلمات المسموعة حتى الآن */
+  heard: number;
+  /** نسبة المسموع الذي من الآية */
+  precision: number;
+  /** آخر نصٍّ سُمع (للعرض) */
+  text: string;
 }
 
 /** مقارنة كلمة من تلاوة المستخدم بنظيرتها عند القارئ المعتمد */
@@ -169,14 +194,28 @@ export interface AyahRecord {
   at: number;
 }
 
+export type TextCheck = 'ok' | 'weak' | 'mismatch' | 'unverified' | 'demo';
+
 export interface AlignmentResult {
   targetKey: string;
   targetLabel: string;
   engine: EngineId;
   transcript: string;
-  transcriptMatch: number; // 0..1 — captured target words ratio
+  transcriptMatch: number; // 0..1 — درجة مطابقة النصّ (F1 على الكلمات) أو تغطية الصوت
   matchSource: 'transcript' | 'coverage' | 'demo';
-  predWords: { word: string; ok: boolean }[];
+  predWords: { word: string; ok: boolean; prefix?: boolean }[];
+  /**
+   * بوّابة النصّ — هل قُرئت **هذه** الآية؟
+   *   ok         تبيّن نصّ الآية في المسموع (يجوز الاجتياز)
+   *   weak       تبيّن بعضُه فقط (نصفُ آية، أو سماعٌ رديء) — لا اجتياز
+   *   mismatch   المسموع بعيدٌ عن الآية (كلامٌ آخر أو آيةٌ أخرى) — لا اجتياز
+   *   unverified لم يُستمع بالألفاظ (نتيجةٌ لحظية، أو تعذّر السماع الذكي) — لا اجتياز
+   *   demo       عرضٌ تجريبي
+   */
+  textCheck: TextCheck;
+  /** نسبة كلمات الآية التي سُمعت / نسبة المسموع الذي من الآية (عند السماع بالألفاظ) */
+  textRecall?: number;
+  textPrecision?: number;
   overallScore: number; // 0..100
   verdict: string;
   durationMs: number;

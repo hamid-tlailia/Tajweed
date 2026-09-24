@@ -13,6 +13,7 @@
     "test:live": "tsx scripts/test-live.ts",
     "test:compare": "tsx scripts/test-compare.ts",
     "test:score": "tsx scripts/test-score.ts",
+    "test:text": "tsx scripts/test-text.ts",
     "bench:timing": "tsx scripts/bench-timing.ts"
   },
   "dependencies": {

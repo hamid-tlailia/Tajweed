@@ -5,6 +5,7 @@ import { energyEnvelope } from '@/lib/audio';
 import { resultPulse, wordViolation } from '@/lib/haptics';
 import { HARAKA_MS, TAJWEED_SOURCES, TEMPO_META, timingTraceAt } from '@/lib/tajweed';
 import { PASS_SCORE } from '@/lib/types';
+import { TEXT_GATE_OK } from '@/lib/match';
 import { fmtSec, fmtTime, waveThemeColors } from '@/lib/util';
 import { useTahqiq } from '@/store';
 import RuleBadges from './RuleBadges';
@@ -242,12 +243,38 @@ export default function AlignmentConsole() {
   const surahDone = scope === 'ayah' && lastAyah > 0 && selectedAyah >= lastAyah && result.passed;
   const tipByIndex = new Map(result.tips.map((t) => [t.index, t]));
   const matchPct = Math.round(result.transcriptMatch * 100);
+  const textCheck = result.textCheck ?? (result.matchSource === 'demo' ? 'demo' : result.matchSource === 'coverage' ? 'unverified' : 'ok');
+  const textOk = textCheck === 'ok' || textCheck === 'demo';
   const matchSub =
-    result.matchSource === 'coverage'
-      ? 'تعذّر تمييز النصّ — هذه تغطية الكلمات المسموعة'
-      : result.matchSource === 'demo'
+    textCheck === 'unverified'
+      ? 'لم يُتحقَّق من النصّ — هذه تغطية الكلمات المسموعة فقط'
+      : textCheck === 'demo'
         ? 'محاكاة للتجربة — بلا ميكروفون'
-        : 'مدى تطابق ما قرأتَه مع الآية';
+        : textCheck === 'mismatch'
+          ? 'ما سُمع ليس نصَّ هذه الآية'
+          : textCheck === 'weak'
+            ? 'تبيّن بعضُ نصّ الآية فقط'
+            : 'تبيّن نصّ الآية في تلاوتك';
+  const matchTone: 'mint' | 'gold' | 'warn' | 'slate' =
+    textCheck === 'unverified' ? 'slate' : textOk ? (matchPct >= 70 ? 'mint' : 'gold') : 'warn';
+  /** عنوان بطاقة الاجتياز: يُصرَّح بسبب عدم الاجتياز إن كان النصّ */
+  const passTitle = result.reciter
+    ? result.passed
+      ? 'اجتزت الآية بمطابقة القارئ المعتمد'
+      : textOk
+        ? 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
+        : textCheck === 'unverified'
+          ? 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
+          : 'لم تُجتز — المقروء ليس نصَّ الآية'
+    : result.passed
+      ? 'اجتزت الآية'
+      : textOk
+        ? 'لم تُجتز بعد'
+        : textCheck === 'unverified'
+          ? 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
+          : textCheck === 'weak'
+            ? 'لم تُجتز — لم يتبيّن نصّ الآية كاملًا'
+            : 'لم تُجتز — المقروء ليس نصَّ الآية';
 
   const glossary = (() => {
     const seen = new Map<string, { label: string; note: string }>();
@@ -272,13 +299,7 @@ export default function AlignmentConsole() {
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <p className={`font-quran text-lg ${result.passed ? 'text-mint-300' : 'text-warn-300'}`}>
-              {result.reciter
-                ? result.passed
-                  ? 'اجتزت الآية بمطابقة القارئ المعتمد'
-                  : 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
-                : result.passed
-                  ? 'اجتزت الآية'
-                  : 'لم تُجتز بعد'}
+              {passTitle}
               <span className="ms-2 font-brand text-base">
                 {result.reciter ? `${result.reciter.matchPct}%` : `${result.overallScore}%`}
               </span>
@@ -295,8 +316,8 @@ export default function AlignmentConsole() {
                   </span>
                 ) : (
                   <span>
-                    هذه <b>نتيجةٌ لحظية</b> قِيست من أزمنة صوتك وحده (بلا سماع ذكي). جهّز السماع الذكي من «الإعدادات»
-                    ليُميَّز نصُّ تلاوتك أيضًا، أو اضغط «إعادة تقييم» لتحليلٍ أدقّ.
+                    هذه <b>نتيجةٌ لحظية</b> قِيست من أزمنة صوتك وحده (بلا سماع ذكي) — ولا يُعتمد بها الاجتياز حتى يتحقّق
+                    السماع الذكي من أنّ المقروء هو الآية. جهّزه من «الإعدادات» أو اضغط «إعادة تقييم».
                   </span>
                 )}
               </p>
@@ -335,9 +356,13 @@ export default function AlignmentConsole() {
         ) : null}
         {!result.passed ? (
           <p className="mt-3 text-[11px] text-slate-500">
-            {result.reciter
-              ? `حدّ الاجتياز مطابقة القارئ المعتمد ${PASS_SCORE}٪ (درجتك الذاتية ${result.overallScore}٪). حاذِ أزمنة كلماتك بأزمنته وأعد التلاوة.`
-              : `حدّ الاجتياز ${PASS_SCORE}٪. أعد التلاوة بعد إصلاح الملاحظات أعلاه.`}
+            {!textOk
+              ? textCheck === 'unverified'
+                ? `شرط الاجتياز: أن يتبيّن نصّ الآية بالسماع الذكي، ثم درجة ${PASS_SCORE}٪ فأكثر.`
+                : `شرط الاجتياز أولًا: أن يكون المقروء هو الآية المختارة (تطابق النصّ ${Math.round(100 * TEXT_GATE_OK)}٪ فأكثر) — ثم الدرجة ${PASS_SCORE}٪.`
+              : result.reciter
+                ? `حدّ الاجتياز مطابقة القارئ المعتمد ${PASS_SCORE}٪ (درجتك الذاتية ${result.overallScore}٪). حاذِ أزمنة كلماتك بأزمنته وأعد التلاوة.`
+                : `حدّ الاجتياز ${PASS_SCORE}٪. أعد التلاوة بعد إصلاح الملاحظات أعلاه.`}
           </p>
         ) : null}
       </div>
@@ -424,7 +449,7 @@ export default function AlignmentConsole() {
 
       <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <Stat label="الدرجة الكلية" value={`${result.overallScore}%`} tone={scoreTone} sub="يجمع دقةَ النطق وصحةَ المدود والغنن" />
-        <Stat label="مطابقة ما قرأته" value={`${matchPct}%`} tone={matchPct >= 70 ? 'mint' : matchPct >= 40 ? 'gold' : 'warn'} sub={matchSub} />
+        <Stat label="مطابقة ما قرأته" value={textCheck === 'unverified' ? '—' : `${matchPct}%`} tone={matchTone} sub={matchSub} />
         <Stat label="مدة التلاوة" value={fmtTime(result.durationMs)} sub={`مرتبة ${TEMPO_META[result.tempo]?.label ?? 'ترتيل'}`} />
         <Stat
           label="طريقة التقييم"
@@ -435,12 +460,20 @@ export default function AlignmentConsole() {
       </div>
 
       {result.transcript && result.matchSource === 'transcript' ? (
-        <div className="mt-3 rounded-xl border border-line bg-ink-850/50 p-3.5">
-          <h4 className="text-[11px] text-slate-400">ما سمعه التطبيق من تلاوتك — ما نقص أو اختلف مُظلَّل</h4>
+        <div className={`mt-3 rounded-xl border p-3.5 ${textOk ? 'border-line bg-ink-850/50' : 'border-danger-500/40 bg-danger-500/10'}`}>
+          <h4 className="text-[11px] text-slate-400">
+            {textOk
+              ? 'ما سمعه التطبيق من تلاوتك — ما نقص أو اختلف مُظلَّل'
+              : `ما سمعه التطبيق من تلاوتك — وهو ${textCheck === 'weak' ? 'لا يوافق الآية إلا بعضَها' : 'ليس نصَّ الآية المختارة'}؛ ما ليس منها مُظلَّل`}
+          </h4>
           <p className="mt-2 font-quran text-lg leading-9 text-slate-200">
             {result.predWords.length ? (
               result.predWords.map((w, i) => (
-                <span key={i} className={w.ok ? '' : 'rounded bg-danger-500/15 px-1 text-danger-300'}>
+                <span
+                  key={i}
+                  title={w.prefix ? 'بسملةٌ قبل الآية — لا تُحسب منها' : undefined}
+                  className={w.prefix ? 'text-slate-500' : w.ok ? '' : 'rounded bg-danger-500/15 px-1 text-danger-300'}
+                >
                   {w.word}{' '}
                 </span>
               ))

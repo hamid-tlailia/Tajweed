@@ -12,18 +12,18 @@ import { readFileSync } from 'node:fs';
 import { makeDemoSamples } from '../src/lib/audio';
 import { runAlignment } from '../src/lib/alignment';
 import { analyzeWords } from '../src/lib/tajweed';
-import { buildTarget } from '../src/lib/quran';
+import { buildTarget, stripSurahBasmala } from '../src/lib/quran';
 import { mulberry32, mean } from '../src/lib/util';
 import type { SurahData, Tempo } from '../src/lib/types';
 
 const j = JSON.parse(readFileSync('public/quran.json', 'utf8'));
 function surah(id: number): SurahData {
   const s = j.surahs.find((x: any) => x.id === id);
-  return {
+  return stripSurahBasmala({
     id,
     meta: { id, name: s.name, englishName: '', englishNameTranslation: '', revelationType: '', numberOfAyahs: s.ayahs.length },
     ayahs: s.ayahs.map((a: any) => ({ number: a.n, numberInSurah: a.n, text: a.text })),
-  };
+  });
 }
 const d1 = surah(1);
 const d2 = surah(2);

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { LiveSnapshot, WordTajweed } from '@/lib/types';
+import type { LiveSnapshot, LiveTextCheck, TextCheck, WordTajweed } from '@/lib/types';
 import { fmtSec } from '@/lib/util';
 import RuleBadges from './RuleBadges';
 import { Badge } from './ui';
@@ -23,6 +23,104 @@ function chipClass(status: string): string {
  * وزمنها، وتُحكم كل كلمة لحظة انتهائها، ويظهر تنبيه فوري عند أي مخالفة
  * (مدّ/غنّة ناقصة أو زائدة أو كلمة لم تُسمع) مع اهتزاز ونغمة خفيفة.
  */
+/**
+ * شريط التحقّق من النصّ: أثناء التسجيل من السماع اللحظي، وبعد الإيقاف من
+ * التحليل الكامل — فالمرافقة الحية لا «تمرّ» إلا إن كان المقروء هذه الآية.
+ */
+function TextVerdict({
+  live,
+  finalText,
+  finished,
+  frozen,
+  refining,
+  modelReady,
+}: {
+  live: LiveTextCheck | null;
+  finalText: TextCheck | null;
+  finished: boolean;
+  frozen: boolean;
+  refining: boolean;
+  modelReady: boolean;
+}) {
+  let tone: 'ok' | 'warn' | 'bad' | 'muted' = 'muted';
+  let text: ReactNode = null;
+  if (frozen) {
+    tone = 'bad';
+    text = 'المقروء ليس نصَّ هذه الآية — جُمِّدت المرافقة. أوقف التسجيل، ثم اقرأ الآية المختارة (أو اختر الآية التي تقرؤها).';
+  } else if (finished) {
+    if (finalText === 'ok') {
+      tone = 'ok';
+      text = 'تحقّق السماع الذكي: ما قرأته هو نصّ هذه الآية.';
+    } else if (finalText === 'mismatch') {
+      tone = 'bad';
+      text = 'لم تُعتمد المرافقة الحية: ما قُرئ ليس نصَّ هذه الآية (انظر تبويب النتيجة).';
+    } else if (finalText === 'weak') {
+      tone = 'bad';
+      text = 'لم تُعتمد المرافقة الحية: لم يتبيّن نصّ الآية كاملًا في المسموع (كلمةٌ مبدَّلة أو ناقصة — انظر النتيجة).';
+    } else if (refining) {
+      tone = 'muted';
+      text = 'جارٍ التحقّق من النصّ بالسماع الذكي… تُعتمد الجلسة بعده.';
+    } else if (finalText === 'unverified' || !modelReady) {
+      tone = 'warn';
+      text = 'لم يُتحقَّق من النصّ بعد — لا تُعتمد الجلسة حتى يتحقّق السماع الذكي من أنّ المقروء هو الآية.';
+    } else {
+      tone = 'muted';
+      text = 'بانتظار التحليل الكامل…';
+    }
+  } else if (live) {
+    switch (live.status) {
+      case 'off':
+        tone = 'muted';
+        text = modelReady ? 'التحقّق من النصّ بعد الإيقاف.' : 'السماع الذكي غير جاهز بعد — يُتحقَّق من النصّ بعد الإيقاف.';
+        break;
+      case 'checking':
+        tone = 'muted';
+        text = 'يُستمع إلى ما تقرأ للتحقّق من أنه نصّ الآية…';
+        break;
+      case 'same':
+        tone = 'ok';
+        text = `ما تقرؤه من هذه الآية ✓ (${live.heard} كلمة سُمعت)`;
+        break;
+      case 'unsure':
+        tone = 'muted';
+        text = 'السماع غير واضح — اقرأ بوضوحٍ وقربٍ من الميكروفون.';
+        break;
+      case 'warn':
+        tone = 'warn';
+        text = 'ما يُسمع لا يشبه نصَّ الآية المختارة — تأكّد أنك تقرأ الآية الصحيحة.';
+        break;
+      case 'other':
+        tone = 'bad';
+        text = 'المقروء ليس نصَّ هذه الآية — جُمِّدت المرافقة.';
+        break;
+    }
+  }
+  if (!text) return null;
+  const cls =
+    tone === 'ok'
+      ? 'border-mint-500/50 bg-mint-500/10 text-mint-200'
+      : tone === 'warn'
+        ? 'border-warn-500/60 bg-warn-500/10 text-warn-200'
+        : tone === 'bad'
+          ? 'border-danger-500/60 bg-danger-500/10 text-danger-200 pulse-miss'
+          : 'border-line/70 bg-ink-850/40 text-slate-400';
+  return (
+    <div className={`mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-[11px] leading-relaxed ${cls}`}>
+      <span aria-hidden className="mt-0.5 shrink-0">
+        {tone === 'ok' ? '✓' : tone === 'bad' ? '✗' : tone === 'warn' ? '⚠' : '🎧'}
+      </span>
+      <span className="min-w-0">
+        {text}
+        {live?.text && !finished && live.status !== 'off' && live.status !== 'checking' ? (
+          <span className="mt-0.5 block truncate font-quran text-[13px] text-slate-500" title={live.text}>
+            سُمع: {live.text}
+          </span>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
 export default function LiveCoach({
   snapshot,
   words,
@@ -30,6 +128,10 @@ export default function LiveCoach({
   recording,
   alertOn,
   onToggleAlerts,
+  textCheck = null,
+  finalText = null,
+  refining = false,
+  modelReady = false,
 }: {
   snapshot: LiveSnapshot | null;
   words: { word: string; ayah: number }[];
@@ -37,6 +139,12 @@ export default function LiveCoach({
   recording: boolean;
   alertOn: boolean;
   onToggleAlerts: () => void;
+  /** التحقّق اللحظي من النصّ أثناء التسجيل */
+  textCheck?: LiveTextCheck | null;
+  /** حكم النصّ من التحليل الكامل لهذه الجلسة (بعد الإيقاف) */
+  finalText?: TextCheck | null;
+  refining?: boolean;
+  modelReady?: boolean;
 }) {
   const curRef = useRef<HTMLSpanElement | null>(null);
 
@@ -108,6 +216,15 @@ export default function LiveCoach({
         </div>
       </div>
 
+      <TextVerdict
+        live={textCheck}
+        finalText={finalText}
+        finished={snapshot.finished}
+        frozen={snapshot.frozen}
+        refining={refining}
+        modelReady={modelReady}
+      />
+
       {/* الكلمة الجارية + التي تليها */}
       {inWord ? (
         <div className="mt-3 rounded-xl border border-gold-500/40 bg-ink-850/70 p-3.5">
@@ -165,8 +282,20 @@ export default function LiveCoach({
       ) : (
         <div className="mt-3 rounded-xl border border-dashed border-line/80 bg-ink-850/40 px-3.5 py-3 text-center text-[11px] text-slate-400">
           {snapshot.finished
-            ? `انتهت الجلسة الحية — ${snapshot.doneCount} كلمة قُرئت و${snapshot.violations} مخالفة لحظية. التحليل الكامل في تبويب النتيجة.`
-            : upcomingWord
+            ? (() => {
+                if (snapshot.frozen) return 'أُوقفت المرافقة الحية: المقروء لم يكن نصَّ هذه الآية — فلا تُحتسب هذه الجلسة.';
+                const heard = snapshot.words.filter((w) => w.status !== 'pending' && w.status !== 'silent').length;
+                const unheard = snapshot.words.filter((w) => w.status === 'silent').length;
+                const timing = snapshot.violations - unheard;
+                return `انتهت الجلسة الحية — سُمعت ${heard} من ${n} كلمة${unheard ? `، و${unheard} لم تُسمع` : ''}${
+                  timing > 0 ? `، و${timing} مخالفة زمنية لحظية` : ''
+                }. التحليل الكامل في تبويب النتيجة.`;
+              })()
+            : snapshot.frozen
+              ? 'جُمِّدت المرافقة — أوقف التسجيل.'
+              : snapshot.inPrefix
+                ? 'تقرأ البسملة (ليست من الآية ولا تُحسب) — ثم تبدأ الآية.'
+                : upcomingWord
               ? <>
                   الكلمة التالية: <span className="font-quran text-lg text-gold-200">{upcomingWord.word}</span>
                   {upcomingTj?.maddType || upcomingTj?.ghunnaType ? (

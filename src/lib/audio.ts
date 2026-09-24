@@ -28,6 +28,63 @@ export class Recorder {
   onLevel: ((rms: number, tMs: number) => void) | null = null;
   micError: string | null = null;
 
+  /**
+   * الصوت الخام أثناء التسجيل بمعدّل ١٦ كيلوهرتز (مدخل Whisper) — يُجمَع من حلقة
+   * المستوى نفسها، فيمكن **الاستماع أثناء التسجيل** (التحقّق اللحظي من النصّ)
+   * دون انتظار ملفّ التسجيل النهائي.
+   */
+  private pcmChunks: Float32Array[] = [];
+  private pcmLen = 0;
+  private resamplePos = 0; // موضع القراءة الكسري في مدخل المعدّل الأصلي
+  private resampleLast = 0; // آخر عيّنة من الدفعة السابقة (للاستيفاء الخطّي عبر الحدود)
+
+  /** طول الصوت المجموع (بالعيّنات عند ١٦ كيلوهرتز) */
+  get pcmSamples(): number {
+    return this.pcmLen;
+  }
+
+  /** نسخة من الصوت المجموع حتى الآن (١٦ كيلوهرتز أحادي) — أو من عيّنةٍ معيّنة */
+  pcm16k(from = 0): Float32Array {
+    const out = new Float32Array(Math.max(0, this.pcmLen - from));
+    let o = 0;
+    let pos = 0;
+    for (const c of this.pcmChunks) {
+      const start = Math.max(0, from - pos);
+      if (start < c.length) {
+        out.set(start ? c.subarray(start) : c, o);
+        o += c.length - start;
+      }
+      pos += c.length;
+    }
+    return out;
+  }
+
+  /** تحويل دفعة إدخال (بمعدّل السياق) إلى ١٦ كيلوهرتز باستيفاءٍ خطّي وتخزينها */
+  private pushPcm(inp: Float32Array, sr: number): void {
+    const ratio = sr / 16000;
+    if (ratio <= 1.0001 && ratio >= 0.9999) {
+      this.pcmChunks.push(inp.slice());
+      this.pcmLen += inp.length;
+      return;
+    }
+    const out: number[] = [];
+    let pos = this.resamplePos; // قد يكون سالبًا قليلًا (يشير إلى داخل الدفعة السابقة)
+    while (pos < inp.length - 1) {
+      const i0 = Math.floor(pos);
+      const f = pos - i0;
+      const a = i0 < 0 ? this.resampleLast : inp[i0];
+      const b = inp[i0 + 1];
+      out.push(a + (b - a) * f);
+      pos += ratio;
+    }
+    this.resamplePos = pos - inp.length;
+    this.resampleLast = inp[inp.length - 1];
+    if (out.length) {
+      this.pcmChunks.push(Float32Array.from(out));
+      this.pcmLen += out.length;
+    }
+  }
+
   async start(): Promise<void> {
     this.micError = null;
     try {
@@ -57,6 +114,10 @@ export class Recorder {
       ) ?? '';
     this.rec = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
     this.chunks = [];
+    this.pcmChunks = [];
+    this.pcmLen = 0;
+    this.resamplePos = 0;
+    this.resampleLast = 0;
     this.rec.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
     };
@@ -76,9 +137,13 @@ export class Recorder {
       const proc: ScriptProcessorNode = ctx.createScriptProcessor(2048, 1, 1);
       let carry = new Float32Array(0);
       proc.onaudioprocess = (e: AudioProcessingEvent) => {
-        const cb = this.onLevel;
-        if (!cb) return;
         const inp = e.inputBuffer.getChannelData(0);
+        this.pushPcm(inp, sr);
+        const cb = this.onLevel;
+        if (!cb) {
+          e.outputBuffer.getChannelData(0).fill(0);
+          return;
+        }
         const buf = new Float32Array(carry.length + inp.length);
         buf.set(carry, 0);
         buf.set(inp, carry.length);
