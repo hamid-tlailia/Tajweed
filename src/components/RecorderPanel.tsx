@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { engineAlign, engineTranscribe } from '@/lib/engine';
 import { Recorder, decodeBlobTo16k, makeDemoSamples } from '@/lib/audio';
+import { ayahLabel, classifyUtterance, loadCorpus, utteranceTokens } from '@/lib/corpus';
 import { LiveTajweedTracker } from '@/lib/live';
 import { editClose, matchTokens, scoreTranscriptMatch } from '@/lib/match';
 import { BASMALA_WORDS, buildTarget, targetTextOf } from '@/lib/quran';
@@ -96,7 +97,6 @@ export default function RecorderPanel() {
   const alertOn = useTahqiq((s) => s.alertOn);
   const setAlertOn = useTahqiq((s) => s.setAlertOn);
   const instantEval = useTahqiq((s) => s.instantEval);
-  const setRefining = useTahqiq((s) => s.setRefining);
 
   const recRef = useRef<Recorder | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -126,7 +126,13 @@ export default function RecorderPanel() {
   }>({ busy: false, lastVoiced: 0, lastEnd: 0, heard: [], strikes: 0, fails: 0, done: false, rebased: false });
   /** بداية جلسة المرافقة الحية (لربط نتيجة التحليل الكامل بها) ونصّ آيتها للمطابقة */
   const [liveStartedAt, setLiveStartedAt] = useState(0);
-  const liveTargetTextRef = useRef('');
+  /** بيانات جلسة المرافقة: نصّ المقطع المستهدف ومرجعه (لمطابقة المصحف كلّه) */
+  const liveSessionRef = useRef<{ text: string; surahId: number; scope: 'ayah' | 'surah'; ayah: number }>({
+    text: '',
+    surahId: 0,
+    scope: 'ayah',
+    ayah: 1,
+  });
   const result = useTahqiq((s) => s.result);
   const refining = useTahqiq((s) => s.refining);
   const modelStatus = useTahqiq((s) => s.modelStatus);
@@ -174,9 +180,11 @@ export default function RecorderPanel() {
     livePushRef.current = 0;
     setLive(null);
     liveTextRef.current = { busy: false, lastVoiced: 0, lastEnd: 0, heard: [], strikes: 0, fails: 0, done: false, rebased: false };
-    liveTargetTextRef.current = targetTextOf(target);
+    liveSessionRef.current = { text: targetTextOf(target), surahId: data.id, scope, ayah: selectedAyah };
     const ready = useTahqiq.getState().modelStatus === 'ready';
     setLiveText({ status: ready ? 'checking' : 'off', heard: 0, precision: 0, text: '' });
+    // تهيئة فهرس المصحف للتحقّق اللحظي (هل المقروء هذه الآية أم غيرها أم كلامٌ عادي)
+    if (ready) void loadCorpus().catch(() => {});
     setLiveStartedAt(Date.now());
     trackerRef.current = new LiveTajweedTracker(tjs, target.words, tau, (e) => {
       const { alertOn: alerts } = useTahqiq.getState();
@@ -190,11 +198,12 @@ export default function RecorderPanel() {
   }
 
   /**
-   * التحقّق اللحظي من النصّ أثناء التسجيل: كل نحو ثانيتين ونصف من الصوت يُفرَّغ
-   * ما استجدّ منه (مع تداخلٍ يسير) في العامل، ويُضمّ إلى ما سُمع قبله، ثم تُقاس
-   * **دقّةُ** المسموع (نسبة ما هو من الآية فيه) — لا استدعاؤه، فالقارئ لم يُكمل
-   * بعد. إن تبيّن مرتين متتاليتين أن المسموع ليس من الآية جُمّدت المرافقة:
-   * فهي إنما تُرافق هذه الآية، ولا «تمرّ» تلاوةُ غيرها فيها.
+   * التحقّق اللحظي من النصّ أثناء التسجيل: كل نحو ثانيةٍ ونصف من الصوت يُفرَّغ
+   * ما استجدّ منه (مع تداخلٍ يسير) في العامل، ويُضمّ إلى ما سُمع قبله، ثم يُقاس
+   * المسموع إلى الآية المختارة **وإلى المصحف كلّه**: فيُعلم هل المقروء هذه
+   * الآية، أم آيةٌ أخرى (وتُسمّى)، أم كلامٌ عادي. إن تبيّن مرتين متتاليتين
+   * أن المسموع ليس من الآية جُمّدت المرافقة: فهي إنما تُرافق هذه الآية، ولا
+   * «تمرّ» تلاوةُ غيرها فيها — ولو كلمةً واحدة بدل كلمة (كـ«تفاحة» بدل «الم»).
    */
   function maybeLiveCheck(tracker: LiveTajweedTracker, rec: Recorder) {
     const st = liveTextRef.current;
@@ -202,24 +211,25 @@ export default function RecorderPanel() {
     const { modelStatus: ms, modelSize: size } = useTahqiq.getState();
     if (ms !== 'ready') return;
     const voiced = tracker.voiced;
-    if (voiced - st.lastVoiced < 2500) return;
-    if (rec.pcmSamples - st.lastEnd < 16000 * 1.5) return;
-    const targetText = liveTargetTextRef.current;
-    if (!targetText) return;
+    if (voiced - st.lastVoiced < 1500) return;
+    if (rec.pcmSamples - st.lastEnd < 16000 * 1.2) return;
+    const sess = liveSessionRef.current;
+    if (!sess.text) return;
     st.busy = true;
     st.lastVoiced = voiced;
     const from = Math.max(0, Math.max(st.lastEnd - 8000, rec.pcmSamples - 16000 * 12));
     const win = rec.pcm16k(from);
     st.lastEnd = rec.pcmSamples;
     engineTranscribe(win, size)
-      .then((text) => {
+      .then(async (text) => {
         if (trackerRef.current !== tracker || st.done) return;
         const toks = matchTokens(text);
         // تداخل النافذتين: قد تتكرّر آخر كلمةٍ مسموعة في أول النافذة التالية
         const last = st.heard[st.heard.length - 1];
         if (last && toks.length && (toks[0] === last || editClose(toks[0], last))) toks.shift();
         st.heard.push(...toks);
-        const sc = scoreTranscriptMatch(st.heard.join(' '), targetText);
+        const heardText = st.heard.join(' ');
+        const sc = scoreTranscriptMatch(heardText, sess.text);
         const heardN = sc.predWords.filter((w) => !w.prefix).length;
         // ابتدأ القارئ بالبسملة وليست من الآية: تُقدَّم على كلمات المرافقة وتُعاد المطابقة
         if (sc.basmalaPrefix && !st.rebased) {
@@ -228,22 +238,54 @@ export default function RecorderPanel() {
           tracker.rebase(analyzeTargetWords(prefixWords, riwayah, tempo), prefixWords);
           setLive(tracker.snapshot());
         }
+        // تمييز المسموع بمطابقة المصحف كلّه: الآية / آية أخرى / كلام عادي
+        let kind: LiveTextCheck['kind'] | undefined;
+        let otherLabel: string | undefined;
+        try {
+          const corpus = await loadCorpus();
+          if (trackerRef.current !== tracker || st.done) return;
+          const ident = classifyUtterance(corpus, utteranceTokens(heardText), sess.text, {
+            targetMatch: sc.match,
+            isTarget: (s, a) => s === sess.surahId && (sess.scope === 'surah' || a === sess.ayah),
+          });
+          kind = ident.kind;
+          if (ident.kind === 'quran' && ident.best) otherLabel = ayahLabel(ident.best);
+        } catch {
+          /* إن تعذّر فهرس المصحف فالقاعدة القديمة (الدقّة) تكفي */
+        }
+        // عدد كلمات الآية المستهدفة: في القصار (١–٣) يكفي إنذارٌ واحد للتجميد
+        // (فـ«تفاحة» بدل «الم» لا تنتظر ضربتين).
+        const targetN = sess.text.split(/\s+/).filter(Boolean).length || 1;
+        const freezeAfter = targetN <= 3 ? 1 : 2;
         let status: LiveTextCheck['status'];
-        if (heardN < 3) status = 'checking';
-        else if (sc.precision >= 0.5) {
-          status = 'same';
-          st.strikes = 0;
-        } else if (sc.precision < 0.34) {
+        if (!heardN) {
+          status = 'checking';
+        } else if (kind === 'quran') {
+          // المقروء آيةٌ أخرى — إنذارٌ ثم تجميد
           st.strikes++;
-          status = st.strikes >= 2 ? 'other' : 'warn';
-        } else status = 'unsure';
+          status = st.strikes >= freezeAfter ? 'other' : 'warn';
+        } else if (kind === 'speech' && (heardN >= 1 || sc.match < 0.15)) {
+          // كلامٌ عاديٌّ ليس من القرآن — ولو كلمةً واحدة بدل كلمة من الآية
+          st.strikes++;
+          status = st.strikes >= freezeAfter ? 'other' : 'warn';
+        } else if (kind === 'target' || sc.precision >= 0.5) {
+          st.strikes = 0;
+          status = heardN >= Math.min(2, targetN) ? 'same' : 'checking';
+        } else if (sc.precision < 0.34 && heardN >= 1) {
+          st.strikes++;
+          status = st.strikes >= freezeAfter ? 'other' : 'warn';
+        } else if (heardN < Math.min(2, targetN)) {
+          status = 'checking';
+        } else {
+          status = 'unsure';
+        }
         if (status === 'other') {
           st.done = true;
           tracker.freeze();
           if (useTahqiq.getState().alertOn) wordViolation('silent');
           setLive(tracker.snapshot());
         }
-        setLiveText({ status, heard: heardN, precision: sc.precision, text: st.heard.join(' ') });
+        setLiveText({ status, heard: heardN, precision: sc.precision, text: heardText, kind, otherLabel });
       })
       .catch((e) => {
         console.warn('[TAHQIQQ] live text check failed:', e);
@@ -286,38 +328,24 @@ export default function RecorderPanel() {
   }
 
   /**
-   * تحليلٌ خلفي أدقّ بعد نتيجةٍ لحظية: لا يحجز الواجهة ولا يُظهر مؤشرًا،
-   * ويستبدل النتيجة متى انتهى — إلا إن كان القارئ قد بدأ جلسةً جديدة.
-   */
-  async function refineInBackground(
-    input: { samples: Float32Array; url: string | null; demo: boolean },
-    session: number,
-  ) {
-    if (!data) return;
-    const target = buildTarget(data, scope, selectedAyah);
-    setRefining(true);
-    try {
-      const res = await engineAlign(input, { tau, modelSize, target, riwayah, tempo }, { stage: () => {}, model: modelHook });
-      if (sessionRef.current === session && !res.demo) setResult(res);
-    } catch (e) {
-      // تبقى النتيجة اللحظية معروضة — لا يُفسد التحسينُ الخلفي ما ظهر
-      console.warn('[TAHQIQQ] refine failed:', e);
-    } finally {
-      if (sessionRef.current === session) setRefining(false);
-    }
-  }
-
-  /**
-   * تقييم التلاوة: إن كان «التقييم اللحظي» مُفعَّلًا ظهرت النتيجة في جزءٍ من
-   * الثانية (قياسُ أزمنة الكلمات من مغلَّف الطاقة وحده، بلا انتظار السماع
-   * الذكي)، ثم يُستأنف التحليل الأدقّ في الخلفية ويُستبدل بالنتيجة.
+   * تقييم التلاوة — **نتيجةٌ واحدة لكل تسجيل**:
+   *
+   * كان «التقييم اللحظي» يُظهر نتيجةً فور الإيقاف ثم يستبدلها بعد ثوانٍ بنتيجة
+   * التحليل الأدقّ — فكان القارئ يرى نتيجتين مختلفتين لا يدري أيّهما تُعتمد.
+   * الآن: إن كان السماع الذكي جاهزًا (أو قيد التجهيز) جُلبت النتيجة الكاملة
+   * مرةً واحدة؛ وإن لم يكن مُجهَّزًا اكتُفي بالنتيجة اللحظية وحدها (بلا
+   * استبدالٍ لاحق) مع التنبيه إلى أنها غير معتمدةٍ حتى يُجهَّز السماع.
+   * والمراجعة اليدوية متاحةٌ دائمًا بزرّ «إعادة تقييم آخر تسجيل».
    */
   async function evaluate(input: { samples: Float32Array; url: string | null; demo: boolean }) {
     if (!data || busyRef.current) return;
-    if (!instantEval || input.demo) {
+    const { modelStatus } = useTahqiq.getState();
+    const fullOnce = !instantEval || input.demo || modelStatus === 'ready' || modelStatus === 'loading';
+    if (fullOnce) {
       await runAnalysis(input);
       return;
     }
+    // السماع الذكي غير مُجهَّز: نتيجةٌ لحظية واحدة (قياس الأزمنة وحده)
     busyRef.current = true;
     const session = ++sessionRef.current;
     lastInputRef.current = input;
@@ -331,13 +359,9 @@ export default function RecorderPanel() {
       console.warn('[TAHQIQQ] instant pass failed:', e);
     }
     busyRef.current = false;
-    setProcessing(false, '');
+    if (sessionRef.current === session) setProcessing(false, '');
     if (!quick || sessionRef.current !== session) return;
-    setResult(quick); // تظهر النتيجة الآن — والقارئ لا ينتظر
-    // التحليل الأدقّ بالسماع الذكي يستكمل في الخلفية (ويُنزَّل النموذج إن لم يكن
-    // قد نُزِّل) — فبه وحده يُعتمد الاجتياز. لا يُعاد بعد فشل تنزيلٍ سابق.
-    const { modelStatus } = useTahqiq.getState();
-    if (modelStatus !== 'error') void refineInBackground(input, session);
+    setResult(quick); // نتيجةٌ واحدة — لا يُستبدل بها شيء بعدها
   }
 
   async function onToggleRecord() {
@@ -516,6 +540,16 @@ export default function RecorderPanel() {
           finalText={
             result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt
               ? result.textCheck
+              : null
+          }
+          finalKind={
+            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt
+              ? result.textKind ?? null
+              : null
+          }
+          finalOther={
+            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt && result.heardOf
+              ? ayahLabel(result.heardOf)
               : null
           }
           refining={refining}

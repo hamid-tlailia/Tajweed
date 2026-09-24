@@ -30,6 +30,8 @@ function chipClass(status: string): string {
 function TextVerdict({
   live,
   finalText,
+  finalKind = null,
+  finalOther = null,
   finished,
   frozen,
   refining,
@@ -37,6 +39,8 @@ function TextVerdict({
 }: {
   live: LiveTextCheck | null;
   finalText: TextCheck | null;
+  finalKind?: LiveTextCheck['kind'] | null;
+  finalOther?: string | null;
   finished: boolean;
   frozen: boolean;
   refining: boolean;
@@ -44,19 +48,31 @@ function TextVerdict({
 }) {
   let tone: 'ok' | 'warn' | 'bad' | 'muted' = 'muted';
   let text: ReactNode = null;
+  const otherRef = live?.kind === 'quran' && live.otherLabel ? ` — بل ${live.otherLabel}` : '';
   if (frozen) {
     tone = 'bad';
-    text = 'المقروء ليس نصَّ هذه الآية — جُمِّدت المرافقة. أوقف التسجيل، ثم اقرأ الآية المختارة (أو اختر الآية التي تقرؤها).';
+    text =
+      live?.kind === 'speech'
+        ? 'المقروء كلامٌ عاديٌّ ليس من القرآن — جُمِّدت المرافقة. أوقف التسجيل واقرأ الآية المختارة.'
+        : `المقروء ليس نصَّ هذه الآية${otherRef} — جُمِّدت المرافقة. أوقف التسجيل، ثم اقرأ الآية المختارة (أو اختر الآية التي تقرؤها).`;
   } else if (finished) {
     if (finalText === 'ok') {
       tone = 'ok';
       text = 'تحقّق السماع الذكي: ما قرأته هو نصّ هذه الآية.';
     } else if (finalText === 'mismatch') {
       tone = 'bad';
-      text = 'لم تُعتمد المرافقة الحية: ما قُرئ ليس نصَّ هذه الآية (انظر تبويب النتيجة).';
+      text =
+        finalKind === 'speech'
+          ? 'لم تُعتمد المرافقة الحية: ما قُرئ كلامٌ عاديٌّ ليس من القرآن (انظر تبويب النتيجة).'
+          : finalKind === 'quran' && finalOther
+            ? `لم تُعتمد المرافقة الحية: ما قُرئ آيةٌ أخرى (${finalOther}) — انظر تبويب النتيجة.`
+            : 'لم تُعتمد المرافقة الحية: ما قُرئ ليس نصَّ هذه الآية (انظر تبويب النتيجة).';
     } else if (finalText === 'weak') {
       tone = 'bad';
-      text = 'لم تُعتمد المرافقة الحية: لم يتبيّن نصّ الآية كاملًا في المسموع (كلمةٌ مبدَّلة أو ناقصة — انظر النتيجة).';
+      text =
+        finalKind === 'quran' && finalOther
+          ? `لم تُعتمد المرافقة الحية: المسموع يُشبه آيةً أخرى (${finalOther}) أكثر من الآية المختارة — انظر النتيجة.`
+          : 'لم تُعتمد المرافقة الحية: لم يتبيّن نصّ الآية كاملًا في المسموع (كلمةٌ مبدَّلة أو ناقصة — انظر النتيجة).';
     } else if (refining) {
       tone = 'muted';
       text = 'جارٍ التحقّق من النصّ بالسماع الذكي… تُعتمد الجلسة بعده.';
@@ -87,11 +103,19 @@ function TextVerdict({
         break;
       case 'warn':
         tone = 'warn';
-        text = 'ما يُسمع لا يشبه نصَّ الآية المختارة — تأكّد أنك تقرأ الآية الصحيحة.';
+        text =
+          live.kind === 'quran'
+            ? `ما يُسمع يُشبه آيةً أخرى${otherRef} — تأكّد أنك تقرأ الآية المختارة.`
+            : live.kind === 'speech'
+              ? 'ما يُسمع لا يشبه نصَّ الآية ولا القرآن — تأكّد أنك تقرأ الآية الصحيحة.'
+              : 'ما يُسمع لا يشبه نصَّ الآية المختارة — تأكّد أنك تقرأ الآية الصحيحة.';
         break;
       case 'other':
         tone = 'bad';
-        text = 'المقروء ليس نصَّ هذه الآية — جُمِّدت المرافقة.';
+        text =
+          live.kind === 'speech'
+            ? 'المقروء كلامٌ عاديٌّ ليس من القرآن — جُمِّدت المرافقة.'
+            : `المقروء ليس نصَّ هذه الآية${otherRef} — جُمِّدت المرافقة.`;
         break;
     }
   }
@@ -130,6 +154,8 @@ export default function LiveCoach({
   onToggleAlerts,
   textCheck = null,
   finalText = null,
+  finalKind = null,
+  finalOther = null,
   refining = false,
   modelReady = false,
 }: {
@@ -143,6 +169,8 @@ export default function LiveCoach({
   textCheck?: LiveTextCheck | null;
   /** حكم النصّ من التحليل الكامل لهذه الجلسة (بعد الإيقاف) */
   finalText?: TextCheck | null;
+  finalKind?: LiveTextCheck['kind'] | null;
+  finalOther?: string | null;
   refining?: boolean;
   modelReady?: boolean;
 }) {
@@ -219,6 +247,8 @@ export default function LiveCoach({
       <TextVerdict
         live={textCheck}
         finalText={finalText}
+        finalKind={finalKind}
+        finalOther={finalOther}
         finished={snapshot.finished}
         frozen={snapshot.frozen}
         refining={refining}
