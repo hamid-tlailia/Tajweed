@@ -88,6 +88,63 @@ export function matchTokens(s: string): string[] {
   return normalizeForMatch(s).split(/\s+/).filter(Boolean);
 }
 
+/** فواتح السور المقطَّعة بعد التوحيد (الٓمٓ ← الم) */
+const FAWATIH_TOKENS = new Set([
+  'الم', 'الر', 'المر', 'المص', 'كهيعص', 'حم', 'عسق', 'طه', 'طسم', 'طس', 'يس', 'ص', 'ق', 'ن',
+]);
+
+/** أسماء الحروف كما يكتبها السماع الآلي (بعد التوحيد) → الحرف */
+const LETTER_NAMES: Record<string, string> = {
+  الف: 'ا', لام: 'ل', ميم: 'م', صاد: 'ص', را: 'ر', راء: 'ر', كاف: 'ك', ها: 'ه', هاء: 'ه',
+  يا: 'ي', ياء: 'ي', عين: 'ع', طا: 'ط', طاء: 'ط', سين: 'س', حا: 'ح', حاء: 'ح', قاف: 'ق', نون: 'ن',
+};
+
+/** تفكيك كلمةٍ ملتصقة إلى أسماء حروف («الفلامميم» ← ا ل م)، أو null */
+function parseGluedNames(tok: string): string | null {
+  const best: (string | null)[] = new Array(tok.length + 1).fill(null);
+  best[0] = '';
+  for (let i = 0; i < tok.length; i++) {
+    if (best[i] == null) continue;
+    for (const [name, ch] of Object.entries(LETTER_NAMES)) {
+      if (tok.startsWith(name, i) && best[i + name.length] == null) best[i + name.length] = best[i] + ch;
+    }
+  }
+  return best[tok.length];
+}
+
+/**
+ * فواتح السور تُقرأ **بأسماء حروفها** («الٓمٓ» ← «أَلِفْ لَامْ مِيمْ»)، فيكتبها
+ * السماعُ الآلي كذلك: «الف لام ميم». وكانت تُقارن بـ«الم» حرفًا بحرف فلا
+ * تطابقها — فتُحكم التلاوةُ الصحيحة «ليست الآية»، ولا يعرفها المصحف كله. هنا
+ * تُجمع أسماء الحروف المتتالية إلى الفاتحة التي تُكوّنها (أطولُها أولًا)، ولا
+ * يُجمع إلا ما كان فاتحةً فعلًا — فلا تُمسّ «يا» النداء ولا «عين» الماء.
+ */
+export function collapseLetterNames(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (let k = 0; k < tokens.length; ) {
+    let letters = '';
+    let bestLen = 0;
+    let bestTok = '';
+    for (let j = k; j < tokens.length; j++) {
+      const ch = LETTER_NAMES[tokens[j]] ?? (j === k ? parseGluedNames(tokens[j]) : null);
+      if (!ch) break;
+      letters += ch;
+      if (FAWATIH_TOKENS.has(letters)) {
+        bestLen = j - k + 1;
+        bestTok = letters;
+      }
+    }
+    if (bestLen) {
+      out.push(bestTok);
+      k += bestLen;
+    } else {
+      out.push(tokens[k]);
+      k++;
+    }
+  }
+  return out;
+}
+
 function arabicOnly(s: string): string {
   return s.replace(/[^\u0600-\u06FF\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -289,7 +346,7 @@ export function scoreTranscriptMatch(pred: string, target: string): TranscriptSc
   });
   if (!t.length) return emptyResult(true);
   if (!arabic) return emptyResult(true);
-  const pAll = matchTokens(arabic);
+  const pAll = collapseLetterNames(matchTokens(arabic));
   if (!pAll.length) return emptyResult(true);
 
   // بسملةٌ في أول المسموع وليست من الآية (أول السورة): تُخرج من الحساب

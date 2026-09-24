@@ -9,7 +9,8 @@ import { readFileSync } from 'node:fs';
 import { runAlignment } from '../src/lib/alignment';
 import { buildCoach } from '../src/lib/coach';
 import { buildCorpus, classifyUtterance, utteranceTokens } from '../src/lib/corpus';
-import { normalizeForMatch, scoreTranscriptMatch, textCheckOf, TEXT_GATE_OK } from '../src/lib/match';
+import { collapseLetterNames, normalizeForMatch, scoreTranscriptMatch, textCheckOf, TEXT_GATE_OK } from '../src/lib/match';
+import { textGateMessage } from '../src/lib/coach';
 import { buildTarget, targetTextOf, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords, normalizeArabic } from '../src/lib/tajweed';
 import type { SurahData, WordAlignment } from '../src/lib/types';
@@ -257,6 +258,52 @@ async function pipeline() {
   );
   check('التجريبي: يجتاز', demo.passed && demo.textCheck === 'demo', `${demo.overallScore}%`);
   check(`حدّ البوّابة ${TEXT_GATE_OK}`, TEXT_GATE_OK === 0.5);
+
+  // فواتح السور تُقرأ بأسماء حروفها، فيكتبها السماع «الف لام ميم» لا «الم»
+  console.log('\n— الفواتح بأسماء حروفها —');
+  for (const [heard, ayah] of [
+    ['ألف لام ميم', 'الٓمٓ'],
+    ['الفلامميم', 'الٓمٓ'],
+    ['حا ميم', 'حمٓ'],
+    ['كاف ها يا عين صاد', 'كٓهيعٓصٓ'],
+    ['يا سين', 'يسٓ'],
+    ['نون والقلم وما يسطرون', 'نٓۚ وَٱلۡقَلَمِ وَمَا يَسۡطُرُونَ'],
+  ] as const) {
+    const sc = scoreTranscriptMatch(heard, ayah);
+    check(`«${heard}» تطابق ﴿${ayah}﴾`, textCheckOf(sc) === 'ok', sc.match.toFixed(2));
+  }
+  check('«يا أيها الناس» لا تُجمع فاتحةً', collapseLetterNames(['يا', 'ايها', 'الناس']).join(' ') === 'يا ايها الناس');
+  check('«من عين» لا تُجمع فاتحةً', collapseLetterNames(['من', 'عين']).join(' ') === 'من عين');
+  check('كلامٌ عادي بدل ﴿الٓمٓ﴾ يُرفض', textCheckOf(scoreTranscriptMatch('اشتركوا في القناة', 'الٓمٓ')) === 'mismatch');
+  check(
+    'السماع لم يتبيّن لفظًا: رسالةٌ صريحة لا «لم يُتحقَّق بعد»',
+    /لم يتبيّن فيه لفظٌ/.test(textGateMessage({ textCheck: 'weak', heardNothing: true }, 0, 1) ?? ''),
+  );
+
+  // النتيجة اللحظية: صوتٌ كثيرٌ خارج كلمات الآية يُنبَّه إليه
+  {
+    const t21 = buildTarget(surah(2), 'ayah', 1);
+    const sr = 16000;
+    const seg = (ms: number, voiced: boolean) => {
+      const n = Math.round((ms / 1000) * sr);
+      const a = new Float32Array(n);
+      if (voiced) for (let i = 0; i < n; i++) a[i] = 0.3 * Math.sin((2 * Math.PI * 140 * i) / sr);
+      return a;
+    };
+    const parts2 = [seg(300, false), seg(3200, true), seg(1500, false), seg(2500, true), seg(600, false)];
+    const s2 = new Float32Array(parts2.reduce((a, b) => a + b.length, 0));
+    let o2 = 0;
+    for (const p of parts2) {
+      s2.set(p, o2);
+      o2 += p.length;
+    }
+    const r = await runAlignment(
+      { samples: s2, demo: false },
+      { tau: 0.8, modelSize: 'tiny', target: t21, riwayah: 'hafs', tempo: 'tadwir', fast: true },
+      { stage: () => {} },
+    );
+    check('اللحظي: صوتٌ زائد على الآية يُذكر في الخلاصة', /صوتٌ زائد/.test(r.summary) && !r.passed, r.summary.slice(0, 90));
+  }
 }
 
 pipeline().then(() => {

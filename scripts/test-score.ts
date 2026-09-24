@@ -244,6 +244,41 @@ async function main() {
     check('آية الكرسي بسرعة ×٠٫٨: العدلة تتبع القارئ (لا المرجع)', Math.abs(r3.res.tempoScale - 0.8) < 0.1 && r3.res.passed, `عدلة ${r3.res.tempoScale.toFixed(2)} · ${r3.res.overallScore}%`);
   }
 
+  console.log('\n════════ 6) الصمت قبل التلاوة لا يُحسب من الكلمة الأولى ════════');
+  {
+    // «الٓمٓ» بلا مدٍّ (٠٫٨ ث) بعد ٢٫٥ ث من السكوت: كانت تُقاس ٣٫٢ ث (من أول التسجيل) فتُحكم «جيدة»
+    const target = buildTarget(d2, 'ayah', 1);
+    const sr = 16000;
+    const lead = new Float32Array(Math.round(2.5 * sr));
+    const body = recite([800]);
+    const samples = new Float32Array(lead.length + body.length + sr);
+    samples.set(body, lead.length);
+    const res = await runAlignment(
+      { samples, demo: true },
+      { tau: 0.8, modelSize: 'tiny', target, riwayah: 'hafs', tempo: 'hadr', reference: refFor('hadr') },
+      { stage: () => {} },
+    );
+    const w = res.words[0];
+    check('﴿الٓمٓ﴾ بلا مدّ بعد سكوت: «أقصر» ولا تجتاز', w.status === 'short' && !res.passed, `${w.startMs}–${w.endMs} م.ث · ${w.status}`);
+
+    // آيةٌ تامّة النسق بعد سكوتٍ ٠٫٨ ث: الأولى لا تُحكم «أطول» والأخيرة لا تُحكم «أقصر»
+    const t4 = buildTarget(d1, 'ayah', 4);
+    const tjs = analyzeWords(t4.words.map((x) => x.word), 'hafs', 'tartil');
+    const b2 = recite(tjs.map((t) => t.expectedMs));
+    const s2 = new Float32Array(Math.round(0.8 * sr) + b2.length);
+    s2.set(b2, Math.round(0.8 * sr));
+    const r2 = await runAlignment(
+      { samples: s2, demo: true },
+      { tau: 0.8, modelSize: 'tiny', target: t4, riwayah: 'hafs', tempo: 'tartil' },
+      { stage: () => {} },
+    );
+    check(
+      'سكوتٌ قبل الآية: الأولى والأخيرة في المقدار',
+      r2.words[0].status !== 'long' && r2.words.at(-1)!.status !== 'short' && r2.passed,
+      r2.words.map((x) => `${x.endMs - x.startMs}:${x.status}`).join(' '),
+    );
+  }
+
   if (fails) {
     console.error(`\nFAILED: ${fails}`);
     process.exit(1);

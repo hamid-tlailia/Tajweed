@@ -11,7 +11,7 @@
 // الحروف (تحريفُ السماع اليسير لا يُسقط الآية)، ثم لا يُحسب ميزان المطابقة
 // الكامل (LCS) إلا لأوائل المرشَّحين — فالتصنيف كلّه بضع عشراتٍ من الملّي ثانية.
 
-import { editClose, matchTokens, normalizeForMatch, scoreTranscriptMatch } from './match';
+import { collapseLetterNames, editClose, matchTokens, normalizeForMatch, scoreTranscriptMatch } from './match';
 import { stripTashkeel } from './tajweed';
 
 export interface CorpusAyah {
@@ -70,7 +70,7 @@ export function utteranceTokens(text: string): string[] {
     .replace(/[^\u0600-\u06FF\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return arabic ? matchTokens(arabic) : [];
+  return arabic ? collapseLetterNames(matchTokens(arabic)) : [];
 }
 
 /** بناء الفهرس من بيانات المصحف المجمّعة (بصيغة public/quran.json) */
