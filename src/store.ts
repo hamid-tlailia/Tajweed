@@ -49,7 +49,10 @@ function saveProgress(p: Record<string, Record<number, AyahRecord>>) {
 }
 
 type PersistedSettings = Partial<
-  Pick<TahqiqStore, 'tempo' | 'tau' | 'riwayah' | 'modelSize' | 'alertOn' | 'theme' | 'useReciterGate'>
+  Pick<
+    TahqiqStore,
+    'tempo' | 'tau' | 'riwayah' | 'modelSize' | 'alertOn' | 'theme' | 'useReciterGate' | 'instantEval'
+  >
 >;
 
 function loadSettings(): PersistedSettings {
@@ -70,6 +73,7 @@ function saveSettings(s: {
   alertOn: boolean;
   theme: ThemeMode;
   useReciterGate: boolean;
+  instantEval: boolean;
 }) {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
@@ -141,6 +145,16 @@ interface TahqiqStore {
   activeWord: number;
   alertOn: boolean;
 
+  /**
+   * التقييم اللحظي: تُعرض النتيجة فور إيقاف التسجيل (قياسُ أزمنةٍ بلا سماع
+   * ذكي)، ثم يُستأنف التحليل الأدقّ في الخلفية ويُستبدل بالنتيجة إن اختلف.
+   */
+  instantEval: boolean;
+  /** التحليل الأدقّ جارٍ في الخلفية بعد نتيجةٍ لحظية */
+  refining: boolean;
+  setInstantEval: (b: boolean) => void;
+  setRefining: (b: boolean) => void;
+
   /** التحكيم بالقارئ المعتمد */
   refEval: RefEvalState;
   refCache: Record<string, RefAlignment>;
@@ -179,6 +193,7 @@ function persistSettings(get: () => TahqiqStore) {
     alertOn: s.alertOn,
     theme: s.theme,
     useReciterGate: s.useReciterGate,
+    instantEval: s.instantEval,
   });
 }
 
@@ -209,6 +224,8 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   result: null,
   activeWord: -1,
   alertOn: true,
+  instantEval: true,
+  refining: false,
 
   refEval: { status: 'idle', key: '', stage: '', error: null },
   refCache: {},
@@ -220,6 +237,11 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
     persistSettings(get);
   },
 
+  setInstantEval: (instantEval) => {
+    set({ instantEval });
+    persistSettings(get);
+  },
+  setRefining: (refining) => set({ refining }),
   setUseReciterGate: (useReciterGate) => {
     set({ useReciterGate });
     persistSettings(get);
@@ -303,6 +325,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       ...(typeof saved.alertOn === 'boolean' ? { alertOn: saved.alertOn } : {}),
       ...(saved.theme ? { theme: saved.theme } : {}),
       ...(typeof saved.useReciterGate === 'boolean' ? { useReciterGate: saved.useReciterGate } : {}),
+      ...(typeof saved.instantEval === 'boolean' ? { instantEval: saved.instantEval } : {}),
     });
     applyTheme(get().theme);
     if (get().surahsStatus === 'ready') return;

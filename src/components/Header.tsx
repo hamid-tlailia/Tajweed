@@ -3,18 +3,49 @@
 import { useTahqiq } from '@/store';
 import { IconMoon, IconSun } from './ui';
 
+/**
+ * شعار التطبيق — «ت» من تَحَقُّق داخل معيّن ذهبي.
+ *
+ * كانت ألوانه مثبتةً بقيمٍ فاتحة (#F1DC9B) فتختفي الحرفُ في الثيم النهاري على
+ * الأرضية العاجية. وصارت كلها من متغيّرات الثيم: الإطار ذهبٌ متدرّج، والحرف
+ * `currentColor` من صنف `text-gold-300` الذي ينقلب في النهاري إلى ذهبٍ غامق —
+ * فيبقى الشعار مقروءًا في الثيمين.
+ */
 function LogoMark({ className = 'h-11 w-11 sm:h-12 sm:w-12' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 48 48" className={`${className} shrink-0 drop-shadow-[0_0_10px_rgba(212,175,55,0.35)]`}>
+    <svg
+      viewBox="0 0 48 48"
+      role="img"
+      aria-label="شعار تَحَقُّق"
+      className={`${className} shrink-0 text-gold-300 drop-shadow-[0_0_10px_rgb(var(--c-gold-500)/0.35)]`}
+    >
       <defs>
         <linearGradient id="tahqiq-gld" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#F1DC9B" />
-          <stop offset="1" stopColor="#B08D1F" />
+          <stop offset="0" stopColor="rgb(var(--c-gold-400))" />
+          <stop offset="1" stopColor="rgb(var(--c-gold-600))" />
         </linearGradient>
       </defs>
-      <rect x="7" y="7" width="34" height="34" rx="8" transform="rotate(45 24 24)" fill="none" stroke="url(#tahqiq-gld)" strokeWidth="2.5" />
-      <rect x="11.5" y="11.5" width="25" height="25" rx="6" transform="rotate(45 24 24)" fill="rgba(212,175,55,0.10)" />
-      <text x="24" y="31" textAnchor="middle" fontSize="17" fill="#F1DC9B" fontFamily="Amiri, serif">
+      <rect
+        x="7"
+        y="7"
+        width="34"
+        height="34"
+        rx="8"
+        transform="rotate(45 24 24)"
+        fill="none"
+        stroke="url(#tahqiq-gld)"
+        strokeWidth="2.5"
+      />
+      <rect
+        x="11.5"
+        y="11.5"
+        width="25"
+        height="25"
+        rx="6"
+        transform="rotate(45 24 24)"
+        fill="rgb(var(--c-gold-500) / 0.12)"
+      />
+      <text x="24" y="31.5" textAnchor="middle" fontSize="18" fill="currentColor" fontFamily="Amiri, serif">
         ت
       </text>
     </svg>

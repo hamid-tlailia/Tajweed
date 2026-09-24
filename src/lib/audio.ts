@@ -3,15 +3,29 @@
 import type { WordTajweed } from './types';
 import { mulberry32 } from './util';
 
+/** إطار مستوى لحظي: جذر متوسط المربعات وطابعٌ زمني بالملي ثانية */
+export interface LevelFrame {
+  rms: number;
+  tMs: number;
+}
+
 export class Recorder {
   private stream: MediaStream | null = null;
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
+  private srcNode: MediaStreamAudioSourceNode | null = null;
+  private proc: ScriptProcessorNode | null = null;
   private rec: MediaRecorder | null = null;
   private chunks: Blob[] = [];
   private raf = 0;
 
   onWave: ((td: Float32Array) => void) | null = null;
+  /**
+   * مستوياتٌ لحظية بإطارات ١٠ م.ث — وهي ما يُغذّى به المتتبّع الحيّ. وحلقة
+   * الرسم (onWave) أبطأ وأسمك (٤٣ م.ث لكل إطار، ومعدّلها معدّل الرسم)، فلا
+   * تكفي لكشف حدود الكلمات في التلاوة المتصلة.
+   */
+  onLevel: ((rms: number, tMs: number) => void) | null = null;
   micError: string | null = null;
 
   async start(): Promise<void> {
@@ -29,7 +43,9 @@ export class Recorder {
     }
     const AC: typeof AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     this.ctx = new AC();
+    if (this.ctx.state === 'suspended') await this.ctx.resume().catch(() => {});
     const srcNode = this.ctx.createMediaStreamSource(this.stream);
+    this.srcNode = srcNode;
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.55;
@@ -45,6 +61,65 @@ export class Recorder {
       if (e.data.size > 0) this.chunks.push(e.data);
     };
     this.rec.start(250);
+  }
+
+  /**
+   * بدء حلقة المستوى اللحظية (إطارات ١٠ م.ث متصلة لا تتخلّلها فجوات الرسم).
+   * تُرجع false إن تعذّرت — وعندها يُكتفى بحلقة الرسم (onWave) بديلًا.
+   */
+  startLevelLoop(): boolean {
+    const ctx = this.ctx as any;
+    if (!ctx || !this.srcNode || typeof ctx.createScriptProcessor !== 'function') return false;
+    try {
+      const sr: number = ctx.sampleRate || 48000;
+      const block = Math.max(64, Math.round(sr / 100)); // ١٠ م.ث
+      const proc: ScriptProcessorNode = ctx.createScriptProcessor(2048, 1, 1);
+      let carry = new Float32Array(0);
+      proc.onaudioprocess = (e: AudioProcessingEvent) => {
+        const cb = this.onLevel;
+        if (!cb) return;
+        const inp = e.inputBuffer.getChannelData(0);
+        const buf = new Float32Array(carry.length + inp.length);
+        buf.set(carry, 0);
+        buf.set(inp, carry.length);
+        const blocks = Math.floor(buf.length / block);
+        const nowMs = performance.now();
+        let off = 0;
+        for (let b = 0; b < blocks; b++, off += block) {
+          let sum = 0;
+          for (let i = 0; i < block; i++) {
+            const v = buf[off + i];
+            sum += v * v;
+          }
+          // الطابع الزمني يُنسب إلى نهاية الدفعة، فتُحفظ ترتيب الإطارات وفروقها
+          cb(Math.sqrt(sum / block), nowMs - (blocks - b - 1) * 10);
+        }
+        carry = buf.slice(off);
+        if (carry.length > block * 4) carry = carry.slice(carry.length - block);
+        const out = e.outputBuffer.getChannelData(0);
+        out.fill(0); // لا يُعاد الصوت إلى السماعة (يمنع الارتجاع)
+      };
+      this.srcNode.connect(proc);
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      proc.connect(mute);
+      mute.connect(ctx.destination);
+      this.proc = proc;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  stopLevelLoop(): void {
+    try {
+      this.proc?.disconnect();
+    } catch {
+      /* noop */
+    }
+    if (this.proc) this.proc.onaudioprocess = null;
+    this.proc = null;
+    this.onLevel = null;
   }
 
   startWaveLoop(): void {
@@ -85,11 +160,14 @@ export class Recorder {
   }
 
   private cleanup(): void {
+    this.stopLevelLoop();
     this.stream?.getTracks().forEach((t) => t.stop());
+    this.srcNode?.disconnect();
     this.ctx?.close().catch(() => {});
     this.stream = null;
     this.ctx = null;
     this.analyser = null;
+    this.srcNode = null;
     this.rec = null;
   }
 }

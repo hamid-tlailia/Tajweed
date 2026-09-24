@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { energyEnvelope } from '@/lib/audio';
 import { resultPulse, wordViolation } from '@/lib/haptics';
-import { TEMPO_META } from '@/lib/tajweed';
+import { HARAKA_MS, TAJWEED_SOURCES, TEMPO_META, timingTraceAt } from '@/lib/tajweed';
 import { PASS_SCORE } from '@/lib/types';
 import { fmtSec, fmtTime, waveThemeColors } from '@/lib/util';
 import { useTahqiq } from '@/store';
@@ -19,6 +19,22 @@ const ENGINE_LABEL: Record<string, string> = {
   'offline-dtw': 'قياس الصوت مباشرة',
 };
 
+/** اسم طريقة التقييم كما تُعرض — وتُذكر اللحظية منها صراحةً */
+function engineLabel(result: { engine: string; instant?: boolean }): string {
+  return result.instant ? 'قياسٌ لحظي للأزمنة (بلا سماع ذكي)' : (ENGINE_LABEL[result.engine] ?? result.engine);
+}
+
+/**
+ * عرض المرجع الزمنيّ للكلمة: قيمةٌ واحدة إن لم يكن للموضع إلا وجه، ونطاقٌ
+ * (أدنى الأوجه ← أعلاها) إن جاز فيه القصرُ والتوسّطُ والإشباع — كالعروض
+ * للسكون وبدل ورش والمنفصل، فلا يظنّ القارئ أن ما دون الإشباع خطأ.
+ */
+function expectedLabel(tj: { expectedMs: number; minMs?: number; maxMs?: number }): string {
+  const lo = Math.min(tj.minMs ?? tj.expectedMs, tj.expectedMs);
+  const hi = Math.max(tj.maxMs ?? tj.expectedMs, tj.expectedMs);
+  return hi > lo * 1.12 ? `${fmtSec(lo)}–${fmtSec(hi)}` : fmtSec(tj.expectedMs);
+}
+
 function cardTone(status: string, active: boolean): string {
   const ring = active ? 'ring-2 ring-gold-400 shadow-[0_0_18px_rgba(212,175,55,0.28)]' : '';
   if (status === 'excellent' || status === 'ok') return `border-mint-500/50 bg-mint-500/10 ${ring}`;
@@ -30,6 +46,7 @@ function cardTone(status: string, active: boolean): string {
 export default function AlignmentConsole() {
   const result = useTahqiq((s) => s.result);
   const processing = useTahqiq((s) => s.processing);
+  const refining = useTahqiq((s) => s.refining);
   const stage = useTahqiq((s) => s.stage);
   const activeWord = useTahqiq((s) => s.activeWord);
   const setActiveWord = useTahqiq((s) => s.setActiveWord);
@@ -39,6 +56,7 @@ export default function AlignmentConsole() {
   const selectedAyah = useTahqiq((s) => s.selectedAyah);
   const data = useTahqiq((s) => s.surahCache[s.selectedSurahId] ?? null);
   const scope = useTahqiq((s) => s.scope);
+  const riwayah = useTahqiq((s) => s.riwayah);
 
   const [playing, setPlaying] = useState(false);
   const [openRow, setOpenRow] = useState<number | null>(null);
@@ -50,6 +68,24 @@ export default function AlignmentConsole() {
 
   const energy = useMemo(() => (result?.samples ? Array.from(energyEnvelope(result.samples, 40)) : []), [result]);
   const durationMs = result?.durationMs ?? 0;
+
+  /**
+   * شرحُ عدّ حركات الكلمة المفتوحة: يُحسب عند الطلب فقط (لا يُثقل العرض)،
+   * وبنفس السياق وشارات الوقف التي بُني بها الزمنُ المعروض في الصفّ.
+   */
+  const openTrace = useMemo(() => {
+    if (!result || openRow === null || openRow < 0 || openRow >= result.words.length) return null;
+    try {
+      return timingTraceAt(
+        result.words.map((w) => ({ word: w.word, ayah: w.ayah })),
+        openRow,
+        riwayah,
+        result.tempo,
+      );
+    } catch {
+      return null;
+    }
+  }, [result, openRow, riwayah]);
 
   useEffect(() => {
     setPlaying(false);
@@ -249,6 +285,22 @@ export default function AlignmentConsole() {
               {result.reciter ? <span className="ms-1.5 font-brand text-xs text-slate-400">(درجتك الذاتية {result.overallScore}%)</span> : null}
             </p>
             <p className="mt-1.5 text-[12px] leading-relaxed text-slate-300">{result.summary}</p>
+            {result.instant ? (
+              <p className="mt-2 flex items-center gap-2 rounded-lg border border-gold-500/40 bg-gold-500/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-gold-200">
+                <span aria-hidden>⚡</span>
+                {refining ? (
+                  <span>
+                    هذه <b>نتيجةٌ لحظية</b> قِيست من أزمنة صوتك فور إيقاف التسجيل — ويُستكمَل الآن التحليلُ الأدقّ
+                    بالسماع الذكي في الخلفية، وتُستبدل النتيجةُ به متى انتهى.
+                  </span>
+                ) : (
+                  <span>
+                    هذه <b>نتيجةٌ لحظية</b> قِيست من أزمنة صوتك وحده (بلا سماع ذكي). جهّز السماع الذكي من «الإعدادات»
+                    ليُميَّز نصُّ تلاوتك أيضًا، أو اضغط «إعادة تقييم» لتحليلٍ أدقّ.
+                  </span>
+                )}
+              </p>
+            ) : null}
           </div>
           <Badge tone={result.passed ? 'mint' : 'warn'}>{TEMPO_META[result.tempo]?.label ?? 'ترتيل'}</Badge>
         </div>
@@ -376,7 +428,7 @@ export default function AlignmentConsole() {
         <Stat label="مدة التلاوة" value={fmtTime(result.durationMs)} sub={`مرتبة ${TEMPO_META[result.tempo]?.label ?? 'ترتيل'}`} />
         <Stat
           label="طريقة التقييم"
-          value={<span className="text-[13px]">{ENGINE_LABEL[result.engine]}</span>}
+          value={<span className="text-[13px]">{engineLabel(result)}</span>}
           tone="slate"
           sub={result.demo ? 'محاكاة للتجربة — بلا ميكروفون' : 'على جهازك دون إنترنت'}
         />
@@ -418,7 +470,7 @@ export default function AlignmentConsole() {
                   {fmtSec(w.startMs)} ← {fmtSec(w.endMs)}
                 </span>
                 <span className="font-brand" dir="ltr">
-                  {fmtSec(w.endMs - w.startMs)} / {fmtSec(w.tajweed.expectedMs)}
+                  {fmtSec(w.endMs - w.startMs)} / {expectedLabel(w.tajweed)}
                 </span>
                 <span>دقة النطق {Math.round(w.confidence * 100)}%</span>
                 <span className="text-slate-500">
@@ -489,7 +541,7 @@ export default function AlignmentConsole() {
                   {fmtSec(w.endMs)}
                 </td>
                 <td className="px-3 py-2 font-brand text-slate-300" dir="ltr">
-                  {fmtSec(w.endMs - w.startMs)} <span className="text-slate-500">/ {fmtSec(w.tajweed.expectedMs)}</span>
+                  {fmtSec(w.endMs - w.startMs)} <span className="text-slate-500">/ {expectedLabel(w.tajweed)}</span>
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
@@ -516,6 +568,26 @@ export default function AlignmentConsole() {
                           {r.note ? <span className="mt-1 block text-[10px] leading-relaxed text-slate-300">{r.note}</span> : null}
                         </span>
                       ))}
+                      {openTrace ? (
+                        <span className="block rounded-lg border border-line bg-ink-900/70 p-2">
+                          <span className="block text-[10px] leading-relaxed text-slate-300">
+                            عدُّ الحركات: <span className="text-gold-300">{openTrace.harakat}</span> حركة ≈{' '}
+                            {fmtSec(openTrace.expectedMs)}
+                            {openTrace.maxMs > openTrace.minMs * 1.12
+                              ? ` — والأوجه الجائزة ${fmtSec(openTrace.minMs)}–${fmtSec(openTrace.maxMs)}`
+                              : ''}
+                          </span>
+                          <span className="mt-1.5 block space-y-1">
+                            {openTrace.steps.map((s, k) => (
+                              <span key={k} className="block text-[10px] leading-snug">
+                                <span className="font-quran text-gold-100">{s.tok}</span>
+                                <span className="mx-1 font-brand text-slate-500">{s.h}</span>
+                                <span className="text-slate-400">{s.why}</span>
+                              </span>
+                            ))}
+                          </span>
+                        </span>
+                      ) : null}
                       <button type="button" onClick={() => setOpenRow(null)} className="text-[10px] text-slate-400 underline decoration-dotted">
                         إغلاق الشرح
                       </button>
@@ -562,6 +634,28 @@ export default function AlignmentConsole() {
           </div>
         </details>
       ) : null}
+
+      {/* المصادر المعتمدة في الأحكام والمقادير */}
+      <details className="mt-3 rounded-xl border border-line/70 bg-ink-850/50">
+        <summary className="cursor-pointer select-none px-3.5 py-3 text-[12px] font-semibold text-gold-200">
+          المصادر المعتمدة في الأحكام ومقادير المدود والغنن
+          <span className="ms-2 text-[10px] font-normal text-slate-500">({TAJWEED_SOURCES.length} مرجعًا — اضغط ليُفتح)</span>
+        </summary>
+        <div className="space-y-2 border-t border-line/60 p-3.5">
+          {TAJWEED_SOURCES.map((s) => (
+            <div key={s.title} className="rounded-lg border border-line/70 bg-ink-900/60 p-2.5">
+              <span className="text-[11px] font-semibold text-gold-200">{s.title}</span>
+              <span className="ms-2 text-[10px] text-slate-500">{s.author}</span>
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-300">{s.used}</p>
+            </div>
+          ))}
+          <p className="rounded-lg border border-line/60 bg-ink-950/40 p-2.5 text-[10px] leading-relaxed text-slate-500">
+            الأحكام ومقاديرُها بالحركات منقولاتٌ من هذه المتون وشروحها ومواضعُها من ضبط المصحف؛ وأما تحويلُ الحركة إلى
+            أجزاء الثانية ({HARAKA_MS} م.ث في الترتيل) فمعايرةٌ هندسية لتلاوات المرتّلِين، لا نصٌّ فيها — وقد
+            يقرأ الإمامُ أبطأ أو أسرع، فيُقاس القارئ بعدلة سرعته هو.
+          </p>
+        </div>
+      </details>
     </Panel>
   );
 }
