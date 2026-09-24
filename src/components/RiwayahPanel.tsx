@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { ayahAudioUrls, globalAyahNumber, resolveReciter } from '@/lib/reciter';
+import { resolveReciter } from '@/lib/reciter';
 import type { Riwayah } from '@/lib/types';
 import { useTahqiq } from '@/store';
+import { useAyahAudio } from './ReciterListen';
 import { IconPause, IconPlay, IconStop, Panel } from './ui';
 
 const RIWAYAHS: { id: Riwayah; label: string; hint: string }[] = [
@@ -14,74 +14,16 @@ const RIWAYAHS: { id: Riwayah; label: string; hint: string }[] = [
 export default function RiwayahPanel() {
   const riwayah = useTahqiq((s) => s.riwayah);
   const setRiwayah = useTahqiq((s) => s.setRiwayah);
-  const surahs = useTahqiq((s) => s.surahs);
-  const surahId = useTahqiq((s) => s.selectedSurahId);
-  const ayah = useTahqiq((s) => s.selectedAyah);
   const scope = useTahqiq((s) => s.scope);
-  const recording = useTahqiq((s) => s.recording);
-  const data = useTahqiq((s) => s.surahCache[s.selectedSurahId] ?? null);
   const tempo = useTahqiq((s) => s.tempo);
   const style = useTahqiq((s) => s.recitationStyle);
   const choice = useTahqiq((s) => s.referenceChoice);
 
-  const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // مشغّل صوت القارئ نفسه المستعمل فوق زرّ الميكروفون (بلا تكرار منطق التشغيل)
+  const { state, play, stop, available, playAyah } = useAyahAudio();
 
   // القارئ المرجعي نفسه الذي يُقاس إليه التحليل (التلقائي بحسب المرتبة ونوع التلاوة، أو المختار)
   const { reciter } = resolveReciter(riwayah, tempo, style, choice);
-  const firstAyahOfScope = scope === 'surah' ? 1 : ayah;
-  const firstWordAyah = data?.ayahs[0]?.numberInSurah ?? firstAyahOfScope;
-  const playAyah = scope === 'surah' ? firstWordAyah : firstAyahOfScope;
-  const globalNo = globalAyahNumber(surahs, surahId, playAyah);
-  const urls = ayahAudioUrls(reciter, surahId, playAyah, globalNo);
-
-  /** يوقف الاستماع (يُستدعى عند تغيير الآية/الرواية أو بدء التسجيل) */
-  function stop() {
-    const el = audioRef.current;
-    if (el) {
-      el.pause();
-      audioRef.current = null;
-    }
-    setState('idle');
-  }
-
-  useEffect(() => {
-    stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surahId, ayah, scope, riwayah, reciter.id]);
-
-  // لا يُسجَّل صوتُ القارئ مع صوت المتعلِّم
-  useEffect(() => {
-    if (recording) stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording]);
-
-  useEffect(() => () => stop(), []);
-
-  function play(fromIndex = 0) {
-    if (fromIndex >= urls.length) {
-      setState('error');
-      return;
-    }
-    setState('loading');
-    const el = new Audio(urls[fromIndex]);
-    el.preload = 'auto';
-    audioRef.current = el;
-    el.oncanplay = () => setState('playing');
-    el.onended = () => {
-      audioRef.current = null;
-      setState('idle');
-    };
-    el.onerror = () => {
-      // جرّب الرابط البديل قبل إعلان التعذّر
-      if (audioRef.current === el) audioRef.current = null;
-      play(fromIndex + 1);
-    };
-    void el.play().catch(() => {
-      if (audioRef.current === el) audioRef.current = null;
-      play(fromIndex + 1);
-    });
-  }
 
   const busy = state === 'loading';
 
@@ -144,7 +86,7 @@ export default function RiwayahPanel() {
             ) : (
               <button
                 onClick={() => play()}
-                disabled={busy || !urls.length}
+                disabled={busy || !available}
                 className="flex h-10 items-center gap-2 rounded-lg border border-gold-600/50 bg-gold-500/15 px-3.5 text-xs font-semibold text-gold-200 transition hover:bg-gold-500/25 disabled:opacity-50"
               >
                 <IconPlay className="h-4 w-4" /> {busy ? 'جارٍ الجلب…' : 'اسمع الآية'}

@@ -8,12 +8,16 @@
 // المسموع هو الزمن المطلوب بالضبط (إلا تكميم الإطار)، ولا يبقى شكٌّ في المرجع.
 
 import { readFileSync } from 'node:fs';
-import { runAlignment } from '../src/lib/alignment';
+import { alignmentQuality, computeWordSpans, energyForcedAlignment, runAlignment } from '../src/lib/alignment';
+import { energyEnvelope } from '../src/lib/audio';
 import { buildTarget, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords } from '../src/lib/tajweed';
 import { autoReciter } from '../src/lib/reciter';
 import { mulberry32 } from '../src/lib/util';
 import type { SurahData, Tempo } from '../src/lib/types';
+
+/** أدنى زمنٍ تُعدّ به الكلمة مسموعة (كما في محرّك المحاذاة) */
+const MIN_HEARD = 70;
 
 let fails = 0;
 function check(name: string, cond: boolean, extra = '') {
@@ -276,6 +280,47 @@ async function main() {
       'سكوتٌ قبل الآية: الأولى والأخيرة في المقدار',
       r2.words[0].status !== 'long' && r2.words.at(-1)!.status !== 'short' && r2.passed,
       r2.words.map((x) => `${x.endMs - x.startMs}:${x.status}`).join(' '),
+    );
+  }
+
+  console.log('\n════════ 7) موضعٌ مختلّ للكلمة: صوتٌ مهمَلٌ بجوارها يُردّ إليها ════════');
+  {
+    // الشكوى: «بِسْمِ» قِيست ٠٫٠٢ ث و«لم تُسمع»، وبين حدّها وحدّ «ٱللَّهِ» صوتٌ لا
+    // كلمةَ له — لأن المحرّك وضع موضعَها في السكوت الذي قبل التلاوة.
+    const target = buildTarget(d1, 'ayah', 1);
+    const tjs = analyzeWords(target.words.map((w) => w.word), 'hafs', 'tadwir');
+    const sr = 16000;
+    const lead = Math.round(1.2 * sr);
+    const body = recite(tjs.map((t) => t.expectedMs));
+    const samples = new Float32Array(lead + body.length);
+    samples.set(body, lead);
+    const energy = energyEnvelope(samples, 20);
+    const durationMs = (samples.length / sr) * 1000;
+    const expected = tjs.map((t) => t.expectedMs);
+
+    // موضعُ الكلمة الأولى في السكوت الذي قبل التلاوة، وسائرُ المواضع صحيحة
+    const good = energyForcedAlignment(tjs, energy, durationMs).map((g) => g.midMs);
+    const spans = computeWordSpans(energy, [600, ...good.slice(1)], expected, durationMs);
+    const first = spans[0].endMs - spans[0].startMs;
+    check('الكلمة الأولى المزحزحة تستردّ صوتها (لا ٠٫٠٢ ث)', first >= MIN_HEARD, `${Math.round(first)} م.ث`);
+    check(
+      'وزمنها قريبٌ من مقدارها',
+      Math.abs(first - expected[0]) / expected[0] < 0.35,
+      `${Math.round(first)} مقابل ${Math.round(expected[0])} م.ث`,
+    );
+    check(
+      'ولا يبقى بين الأولى والثانية صوتٌ مهمَل',
+      spans[1].startMs - spans[0].endMs < 200,
+      `${Math.round(spans[1].startMs - spans[0].endMs)} م.ث`,
+    );
+
+    // وكلمةٌ متروكةٌ حقًّا لا تُستردّ: ليس بجوارها صوتٌ مهمَل ولا جارتُها تسعها
+    const dropped = tjs.map((t, i) => (i === 1 ? 0 : t.expectedMs));
+    const r = await judge(d1, 1, dropped, 'tadwir');
+    check(
+      'والكلمة المتروكة حقًّا تبقى مخالفةً (لا تُختلق لها أزمنة)',
+      !['ok', 'excellent'].includes(r.res.words[1].status),
+      r.res.words[1].status,
     );
   }
 

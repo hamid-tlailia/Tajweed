@@ -188,11 +188,16 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   }
 
   const N = words.length;
-  const mids = perWord.map((p) => p.midMs);
-  for (let i = 1; i < N; i++) if (mids[i] < mids[i - 1]) mids[i] = mids[i - 1] + 40; // enforce monotonicity
+  const expectedList = tjs.map((t) => t.expectedMs);
+  /** من مواضع الكلمات إلى حدودها: ترتيبٌ صاعد ثم قياسُ المصوَّت حول كل موضع */
+  const spansFrom = (pw: { midMs: number }[]) => {
+    const mids = pw.map((p) => p.midMs);
+    for (let i = 1; i < N; i++) if (mids[i] < mids[i - 1]) mids[i] = mids[i - 1] + 40; // enforce monotonicity
+    return computeWordSpans(energy, mids, expectedList, durationMs);
+  };
 
   // precise start/end via per-word voiced-span VAD around each midpoint
-  const spans = computeWordSpans(energy, mids, tjs.map((t) => t.expectedMs), durationMs);
+  const spans = spansFrom(perWord);
   const measuredMs = spans.map((sp) => Math.max(0, sp.endMs - sp.startMs));
   // صوتٌ مسموعٌ خارج كلمات الآية كلها (كلامٌ قبلها أو بعدها، أو آيةٌ أخرى):
   // لا يُعرف لفظُه بلا سماعٍ ذكي، لكن يُنبَّه إليه في النتيجة اللحظية بدل السكوت عنه
@@ -281,14 +286,6 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource = 'demo';
     predWords = ayahWords.map((w) => ({ word: normalizeArabic(w.word), ok: true }));
     textCheck = 'demo';
-  } else if (matchSource !== 'transcript' && heardNothing && voicedMsOf(energy) >= 300) {
-    // استمع السماعُ الذكي إلى صوتٍ بيّن فلم يتبيّن فيه لفظٌ عربيّ واحد: هذا ليس
-    // «لم يُتحقَّق بعد» (كانت تُعرض عندها أزمنتُه ٨٩٪ «نتيجةً أولية» مهما قيل) — بل
-    // لم يُسمع نصُّ الآية. فلا اجتياز، وتُقيَّد الدرجة كما يُقيَّد النصّ المخالف.
-    transcriptMatch = 0;
-    matchSource = 'transcript';
-    textCheck = 'weak';
-    textKind = 'unknown';
   } else if (matchSource !== 'transcript') {
     // (ومنه التقييم اللحظي: لا يستمع بالألفاظ، فتُعرض تغطية الكلمات المسموعة — بلا اجتياز)
     transcriptMatch = voiced;
@@ -300,9 +297,17 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
 
   const textOk = textCheck === 'ok' || textCheck === 'demo';
 
-  // لكل كلمة: هل تبيّن لفظُها؟ — كانت الكلمة تُوسم «جيد» بزمنها وحده ولو لم يُسمع
-  // من التلاوة لفظٌ من الآية أصلًا. فما لم يُسمع لا يُحكم على زمنه ولا يُنصح فيه.
-  if (textCheck === 'mismatch' || (textCheck === 'weak' && heardNothing)) {
+  /**
+   * أخفق السماعُ الذكي: استمع إلى صوتٍ بيّن فلم يُخرج لفظًا عربيًّا واحدًا.
+   * وهذا **غير** أن يسمع القارئَ يقول غير الآية: فلا يُقال لكلماته «لم يُسمع
+   * لفظُها» (كان يُقال ذلك لتلاوةٍ سليمة فتُردّ)، بل يُقال إن اللفظ لم يُتحقَّق
+   * منه — فتُعرض أزمنتُها كما قِيست، بلا اجتياز حتى يتبيّن النصّ.
+   */
+  const textUnavailable = heardNothing && !input.demo && voicedMsOf(energy) >= 300;
+
+  // لكل كلمة: هل تبيّن لفظُها؟ — كانت الكلمة تُوسم «جيد» بزمنها وحده ولو سُمع في
+  // موضعها لفظٌ آخر. فما لم يُسمع لا يُحكم على زمنه ولا يُنصح فيه.
+  if (textCheck === 'mismatch') {
     for (const w of alignWords) w.textHeard = false;
   } else if (matchSource === 'transcript' && scored) {
     const miss = new Set(scored.missing.map((m) => m.index));
@@ -327,7 +332,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       missing: textMissing,
       kind: textKind,
       heardOf,
-      heardNothing: textCheck === 'weak' && heardNothing,
+      textUnavailable,
       extraVoiceMs: textCheck === 'unverified' ? extraVoiceMs : 0,
     },
     Number.isFinite(tempoEst.raw)
@@ -344,6 +349,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource,
     predWords,
     textCheck,
+    textUnavailable,
     textRecall,
     textPrecision,
     textKind,
@@ -535,6 +541,76 @@ export function computeWordSpans(
     const cut = Math.max(loBound, Math.min(hiBound, cutF * frameMs));
     a.endMs = cut;
     b.startMs = cut;
+  }
+
+  // ==== كلمةٌ بلا صوت وبجوارها صوتٌ ليس لها ====
+  // قد يُخطئ محرّك المحاذاة في موضع كلمة (ولا سيّما إذا لم يتبيّن للسماع الذكي
+  // لفظٌ فيبني على تخمين) فيقع موضعُها في السكوت الذي قبل التلاوة — فتُقاس
+  // «بعشرين جزءًا من الثانية» وتُحكم «لم تُسمع» رغم قراءتها، وتزحف أزمنةُ ما
+  // بعدها فتفسد مقارنةُ القارئ. وللصوت الذي كان لها حالان:
+  //   (أ) بقي مهمَلًا بين جارتيها فتأخذه، أو
+  //   (ب) ابتلعته جارتُها فجاءت أطولَ من مقدارها بمقدار كلمةٍ زائدة، فيُقسم بينهما.
+  // ولا يُصلح هذا كلمةً متروكة حقًّا: ليس بجوارها صوتٌ مهمَل، ولا جارتُها أطولَ
+  // من مقدارها بمقدارِ كلمةٍ أخرى.
+  {
+    /** يقسم مقطعًا صوتيًّا على كلماتٍ متتالية بمقادير أزمنتها */
+    const share = (from: number, to: number, idx: number[]) => {
+      let total = 0;
+      for (const q of idx) total += Math.max(1, expectedMs[q]);
+      let acc = 0;
+      for (const q of idx) {
+        const a = from + ((to - from) * acc) / total;
+        acc += Math.max(1, expectedMs[q]);
+        const b = from + ((to - from) * acc) / total;
+        out[q] = { startMs: a, endMs: Math.max(a + frameMs, b) };
+      }
+    };
+    const voicedSpan = (fromMs: number, toMs: number): [number, number] | null => {
+      const a = Math.max(0, Math.ceil(fromMs / frameMs));
+      const b = Math.min(n - 1, Math.floor(toMs / frameMs) - 1);
+      let first = -1;
+      let last = -1;
+      for (let f = a; f <= b; f++) {
+        if (energy[f] < thr) continue;
+        if (first < 0) first = f;
+        last = f;
+      }
+      if (first < 0 || (last - first + 1) * frameMs < MIN_VOICED_MS) return null;
+      return [first * frameMs, (last + 1) * frameMs];
+    };
+    const sizeOf = (k: number) => out[k].endMs - out[k].startMs;
+
+    for (let i = 0; i < out.length; i++) {
+      if (sizeOf(i) >= MIN_VOICED_MS) continue;
+      let j = i;
+      while (j + 1 < out.length && sizeOf(j + 1) < MIN_VOICED_MS) j++;
+      const group: number[] = [];
+      for (let q = i; q <= j; q++) group.push(q);
+      let need = 0;
+      for (const q of group) need += Math.max(1, expectedMs[q]);
+
+      // (أ) صوتٌ مهمَلٌ بين الجارتين المسموعتين
+      const lo = i > 0 ? out[i - 1].endMs : 0;
+      const hi = j < out.length - 1 ? out[j + 1].startMs : durationMs;
+      const orphan = hi > lo ? voicedSpan(lo, hi) : null;
+      if (orphan) {
+        share(orphan[0], orphan[1], group);
+        i = j;
+        continue;
+      }
+
+      // (ب) جارةٌ ابتلعت صوتها: تسع مقدارَها ومقدارَ المجموعة، فيُقسم بينهما
+      const after = j + 1 < out.length ? j + 1 : -1;
+      const before = i > 0 ? i - 1 : -1;
+      for (const nb of [after, before]) {
+        if (nb < 0 || sizeOf(nb) < MIN_VOICED_MS) continue;
+        const fit = (need + Math.max(1, expectedMs[nb])) * 0.8;
+        if (sizeOf(nb) < fit) continue;
+        share(out[nb].startMs, out[nb].endMs, nb === after ? [...group, nb] : [nb, ...group]);
+        break;
+      }
+      i = j;
+    }
   }
 
   // ==== هل سُمعت الكلمةُ فعلًا؟ (تمييز الكلمة المُسقَطة من التلاوة المتعثّرة) ====

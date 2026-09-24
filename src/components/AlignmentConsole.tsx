@@ -246,11 +246,13 @@ export default function AlignmentConsole() {
   const matchPct = Math.round(result.transcriptMatch * 100);
   const textCheck = result.textCheck ?? (result.matchSource === 'demo' ? 'demo' : result.matchSource === 'coverage' ? 'unverified' : 'ok');
   const textOk = textCheck === 'ok' || textCheck === 'demo';
-  /** استمع السماع الذكي فلم يتبيّن في الصوت لفظٌ عربيٌّ واحد */
-  const heardNothing = textCheck === 'weak' && result.matchSource === 'transcript' && !result.predWords.length;
+  /** أخفق السماع الذكي: صوتٌ بيّن ولم يُخرج لفظًا عربيًّا واحدًا */
+  const textUnavailable = !!result.textUnavailable;
   const matchSub =
     textCheck === 'unverified'
-      ? 'لم يُتحقَّق من النصّ — هذه تغطية الكلمات المسموعة فقط'
+      ? textUnavailable
+        ? 'لم يتمكّن السماع الذكي من تمييز الألفاظ — هذه تغطية الصوت فقط'
+        : 'لم يُتحقَّق من النصّ — هذه تغطية الكلمات المسموعة فقط'
       : textCheck === 'demo'
         ? 'محاكاة للتجربة — بلا ميكروفون'
         : textCheck === 'mismatch'
@@ -259,8 +261,6 @@ export default function AlignmentConsole() {
             : result.textKind === 'speech'
               ? 'ما سُمع كلامٌ عاديٌّ ليس من القرآن'
               : 'ما سُمع ليس نصَّ هذه الآية'
-          : heardNothing
-            ? 'لم يتبيّن في صوتك لفظٌ من نصّ الآية'
           : textCheck === 'weak'
             ? result.textKind === 'quran' && result.heardOf
               ? `المقروء يُشبه آيةً أخرى: ${ayahLabel(result.heardOf)}`
@@ -274,8 +274,6 @@ export default function AlignmentConsole() {
       ? 'لم تُجتز — المقروء كلامٌ عاديٌّ ليس من القرآن'
       : result.textKind === 'quran' && result.heardOf
         ? `لم تُجتز — المقروء آيةٌ أخرى (${ayahLabel(result.heardOf)})`
-        : heardNothing
-          ? 'لم تُجتز — لم يُسمع نصّ الآية'
         : textCheck === 'weak'
           ? 'لم تُجتز — لم يتبيّن نصّ الآية كاملًا'
           : 'لم تُجتز — المقروء ليس نصَّ الآية';
@@ -287,14 +285,18 @@ export default function AlignmentConsole() {
           ? 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
           : 'لم تُجتز — درجتك الذاتية دون الحدّ'
         : textCheck === 'unverified'
-          ? 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
+          ? textUnavailable
+            ? 'لم تُجتز — لم يتبيّن اللفظ (قِيست الأزمنة وحدها)'
+            : 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
           : textFailTitle
     : result.passed
       ? 'اجتزت الآية'
       : textOk
         ? 'لم تُجتز بعد'
         : textCheck === 'unverified'
-          ? 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
+          ? textUnavailable
+            ? 'لم تُجتز — لم يتبيّن اللفظ (قِيست الأزمنة وحدها)'
+            : 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
           : textFailTitle;
 
   const glossary = (() => {
@@ -520,7 +522,7 @@ export default function AlignmentConsole() {
                   <span className="font-quran text-xl leading-tight text-gold-100">{w.word}</span>
                   {newAyah ? <span className="ms-2 font-brand text-[9px] text-slate-500">آية {w.ayah}</span> : null}
                 </span>
-                <StatusBadge status={w.status} unheard={w.textHeard === false} />
+                <StatusBadge status={w.status} unheard={w.textHeard === false} unverified={textUnavailable} />
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
                 <span className="font-brand" dir="ltr">
@@ -619,7 +621,7 @@ export default function AlignmentConsole() {
                   </div>
                 </td>
                 <td className="px-3 py-2">
-                  <StatusBadge status={w.status} unheard={w.textHeard === false} />
+                  <StatusBadge status={w.status} unheard={w.textHeard === false} unverified={textUnavailable} />
                   {(() => {
                     const rc = result.reciter?.perWord[i];
                     if (!rc || !rc.dir || rc.dir === 'ok') return null;
