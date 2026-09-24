@@ -108,8 +108,16 @@ export interface TextGateInfo {
   textCheck: TextCheck;
   recall?: number;
   precision?: number;
-  /** كلمات الآية التي لم تتبيّن في المسموع (وإن مرّت البوّابة) */
-  missing?: string[];
+  /** كلمات الآية التي لم تتبيّن في المسموع ولا ما يشبهها (مع ما سُمع بدلها إن سُمع) */
+  missing?: { word: string; heard?: string }[];
+}
+
+/** «الفلق» (سُمع بدلها «الناس») */
+function missingList(missing: { word: string; heard?: string }[], max = 3): string {
+  return missing
+    .slice(0, max)
+    .map((m) => `«${displayWord(m.word)}»${m.heard ? ` (سُمع بدلها «${m.heard}»)` : ''}`)
+    .join('، ');
 }
 
 /**
@@ -121,6 +129,7 @@ export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: 
   const recall = info.recall ?? 0;
   const precision = info.precision ?? 0;
   const heard = Math.round(recall * n);
+  const missing = info.missing ?? [];
   switch (info.textCheck) {
     case 'ok':
     case 'demo':
@@ -131,6 +140,18 @@ export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: 
         'جهّزه من «الإعدادات» أو اضغط «إعادة تقييم».'
       );
     case 'weak':
+      if (precision >= 0.6 && missing.length > Math.max(2, n / 3)) {
+        return `سُمع بعضُ الآية فقط (${Math.max(0, n - missing.length)} من ${n} كلمة، تطابق ${pct}٪) — أكمل الآية كلَّها ليُعتمد الاجتياز.`;
+      }
+      if (transcriptMatch >= 0.5 && missing.length) {
+        const subs = missing.filter((m) => m.heard).length;
+        return (
+          `${missing.length === 1 ? 'كلمةٌ من الآية لم تُسمع في موضعها' : `${missing.length} كلمات من الآية لم تُسمع في موضعها`}: ${missingList(missing)} — ` +
+          (subs
+            ? 'فما قُرئ ليس الآية بنصّها. اقرأ الآية كما في المصحف ليُعتمد الاجتياز.'
+            : 'أعد التلاوة بنطقٍ أوضح لكل كلمة (وإن تكرّر ذلك فجرّب النموذج «الأدقّ»).')
+        );
+      }
       if (precision >= 0.6 && recall < 0.6) {
         return `سُمع بعضُ الآية فقط (${heard} من ${n} كلمة، تطابق ${pct}٪) — أكمل الآية كلَّها ليُعتمد الاجتياز.`;
       }
@@ -200,8 +221,9 @@ export function buildCoach(
   } else if (passed) {
     parts.push(`أحسنت — ${score}% درجة جيدة. ${good} من ${n} كلمة في المقدار.`);
     if (text.missing?.length) {
-      const list = text.missing.slice(0, 3).map((w) => `«${displayWord(w)}»`).join('، ');
-      parts.push(`غير أن ${text.missing.length === 1 ? 'كلمة' : 'كلمات'} ${list} لم تتبيّن في المسموع كما في المصحف — تحقّق من نطقها.`);
+      parts.push(
+        `غير أن ${text.missing.length === 1 ? 'كلمة' : 'كلمات'} ${missingList(text.missing)} لم تتبيّن في المسموع كما في المصحف — تحقّق من نطقها.`,
+      );
     }
     if (tips.length) parts.push(`بقيَت ${tips.length} ملاحظة خفيفة راجعها قبل الآية التالية.`);
     else parts.push('لا ملاحظات على الأزمنة. انتقل للآية التالية متى شئت.');

@@ -50,8 +50,8 @@ export default function ModelPanel() {
       : modelStatus === 'loading'
         ? `يُنزَّل… ${Math.round(modelProgress * 100)}%`
         : modelStatus === 'error'
-          ? 'تعذّر — سيُقيَّم صوتيًّا'
-          : 'لم يُنزَّل بعد';
+          ? 'تعذّر التنزيل — أعد المحاولة'
+          : 'لم يُنزَّل بعد (يبدأ تلقائيًّا عند الاتصال)';
 
   return (
     <Panel
@@ -201,7 +201,7 @@ export default function ModelPanel() {
               ? 'يُنزَّل الآن…'
               : modelStatus === 'error'
                 ? 'إعادة محاولة التنزيل'
-                : 'تجهيز السماع الذكي (مرة واحدة فقط)'}
+                : 'تجهيز السماع الذكي الآن (يُجهَّز تلقائيًّا عند فتح التطبيق)'}
         </button>
         {modelMessage && modelStatus === 'error' && (
           <p className="mt-2 text-[10px] leading-relaxed text-danger-300">{modelMessage}</p>

@@ -148,6 +148,52 @@ html.theme-day {
 
 html {
   scroll-behavior: smooth;
+  /* لا تكبير بالنقر المزدوج ولا بالقرص: التمرير فقط (يكمّل منع التكبير في DeviceGuards) */
+  touch-action: pan-x pan-y;
+  -ms-touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  touch-action: pan-x pan-y;
+  overscroll-behavior-y: none;
+}
+
+/* ---------- قفل الاتجاه الرأسي على الهواتف ----------
+   في التطبيق المثبَّت يقفل البيان (manifest) الاتجاهَ رأسيًّا؛ وفي المتصفح لا يملك
+   الموقع قفل الشاشة، فتُغطّى الواجهة في الوضع الأفقي على الهواتف (شاشة لمسٍ قصيرة)
+   بطلب إعادة الهاتف إلى الوضع الرأسي. الحواسيب واللوحيات الكبيرة لا يشملها. */
+.orientation-guard {
+  display: none;
+}
+@media (orientation: landscape) and (max-height: 520px) and (pointer: coarse) {
+  .orientation-guard {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    text-align: center;
+    background: var(--page-bg, #070b10);
+    color: #e8c766;
+  }
+  .orientation-guard .rotate-icon {
+    font-size: 40px;
+    animation: rotate-hint 1.6s ease-in-out infinite;
+  }
+}
+@keyframes rotate-hint {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-90deg);
+  }
 }
 
 /* ---------- الخطوط: محلية بالكامل ----------

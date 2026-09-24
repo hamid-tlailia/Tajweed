@@ -8,7 +8,8 @@
 import { energyEnvelope } from './audio';
 import { buildCoach } from './coach';
 import { editClose, normalizeForMatch, scoreTranscriptMatch, textCheckOf } from './match';
-import { targetTextOf } from './quran';
+import type { TranscriptScore } from './match';
+import { BASMALA_WORDS, startsWithBasmalaWords, targetTextOf } from './quran';
 import { analyzeTargetWords, classifyWord, normalizeArabic, tajweedScore, verdictFor } from './tajweed';
 import type { TextCheck } from './types';
 import type {
@@ -65,9 +66,16 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const sr = input.sampleRate ?? 16000;
   const samples = input.samples;
   const durationMs = (samples.length / sr) * 1000;
-  const words = opts.target.words;
+  const ayahWords = opts.target.words;
   const tempo = opts.tempo ?? 'tartil';
-  const tjs: WordTajweed[] = analyzeTargetWords(words, opts.riwayah, tempo);
+  /**
+   * كلمات المحاذاة: كلمات الآية — وقد تُسبَق بالبسملة إن تبيّن من المسموع أن
+   * القارئ ابتدأ بها (أول السورة) وليست من نصّ الآية: فتُحاذى معها لئلا يُحسب
+   * صوتُها على أول كلمات الآية، ثم تُحذف من النتيجة (لا تُحكم ولا تدخل الدرجة).
+   */
+  let words = ayahWords;
+  let tjs: WordTajweed[] = analyzeTargetWords(words, opts.riwayah, tempo);
+  let prefixCount = 0;
 
   hooks.stage('تهيئة الصوت المسجَّل…');
   const energy = energyEnvelope(samples, FRAME_MS);
@@ -80,8 +88,10 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   let predWords: { word: string; ok: boolean }[] = [];
   let textRecall: number | undefined;
   let textPrecision: number | undefined;
-  /** كلمات الآية التي لم تتبيّن في المسموع (لتُذكر في الخلاصة) */
-  let textMissing: string[] = [];
+  /** نتيجة مطابقة النصّ (إن سُمع بالألفاظ) */
+  let scored: TranscriptScore | null = null;
+  /** كلمات الآية التي لم تتبيّن في المسموع ولا ما يشبهها (لتُذكر في الخلاصة) */
+  let textMissing: { word: string; heard?: string }[] = [];
 
   if (!input.demo && !opts.fast) {
     try {
@@ -98,14 +108,21 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
         ),
       );
       transcript = tsOut.text;
-      const scored = scoreTranscriptMatch(transcript, targetTextOf(opts.target));
-      transcriptMatch = scored.match;
-      predWords = scored.predWords;
-      if (!scored.empty) {
+      const sc = scoreTranscriptMatch(transcript, targetTextOf(opts.target));
+      transcriptMatch = sc.match;
+      predWords = sc.predWords;
+      if (!sc.empty) {
+        scored = sc;
         matchSource = 'transcript';
-        textRecall = scored.recall;
-        textPrecision = scored.precision;
-        textMissing = words.filter((_, i) => scored.targetHit[i] === false).map((w) => w.word);
+        textRecall = sc.recall;
+        textPrecision = sc.precision;
+        textMissing = sc.missing.map((m) => ({ word: ayahWords[m.index]?.word ?? m.word, heard: m.heard }));
+        if (sc.basmalaPrefix && !startsWithBasmalaWords(ayahWords.map((w) => w.word))) {
+          const prefix = BASMALA_WORDS.map((w) => ({ word: w, ayah: ayahWords[0]?.ayah ?? 1 }));
+          words = [...prefix, ...ayahWords];
+          tjs = analyzeTargetWords(words, opts.riwayah, tempo);
+          prefixCount = prefix.length;
+        }
       }
 
       // 1) best precision: teacher-forced cross-attention matrix
@@ -161,7 +178,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     maxMs: Math.max(60, Math.max(t.maxMs ?? t.expectedMs, t.expectedMs) * tempoScale),
   }));
 
-  const alignWords: WordAlignment[] = words.map((w, i) => {
+  const alignWords: WordAlignment[] = ayahWords.map((w, k) => {
+    const i = k + prefixCount; // فهرس الكلمة في قائمة المحاذاة (بعد البسملة إن وُجدت)
     const { startMs, endMs } = spans[i];
     const status = classifyWord(measuredMs[i], refMs[i], opts.tau, refWin[i]);
     let conf = perWord[i].conf;
@@ -169,7 +187,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     else if (engine === 'whisper-ts') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
     else if (engine === 'whisper-energy') conf = clamp(0.55 * conf + 0.45 * transcriptMatch, 0.05, 0.99);
     return {
-      index: i,
+      index: k,
       ayah: w.ayah,
       word: w.word,
       startMs,
@@ -187,8 +205,10 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   });
 
   const meanConf = mean(alignWords.map((w) => w.confidence));
-  // انتظام النسق: مطابقة الأزمنة بعدلة السرعة (وهو ما يُقاس عليه المتعلّم فعلًا)
-  const rhythm = mean(measuredMs.map((m, i) => tajweedScore(m, refMs[i], opts.tau, refWin[i])));
+  // انتظام النسق: مطابقة الأزمنة بعدلة السرعة (وهو ما يُقاس عليه المتعلّم فعلًا) — لكلمات الآية دون البسملة
+  const rhythm = mean(
+    measuredMs.slice(prefixCount).map((m, k) => tajweedScore(m, refMs[k + prefixCount], opts.tau, refWin[k + prefixCount])),
+  );
   // ملاءمة المرتبة المختارة: انحراف السرعة وحده لا يُسقط الدرجة، لكن أثره يظهر فيها
   const tempoFit = clamp(1 - Math.abs(Math.log2(tempoScale)) / 2.4, 0, 1);
   const meanTj = 0.85 * rhythm + 0.15 * tempoFit;
@@ -205,7 +225,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   if (input.demo) {
     transcriptMatch = 1;
     matchSource = 'demo';
-    predWords = words.map((w) => ({ word: normalizeArabic(w.word), ok: true }));
+    predWords = ayahWords.map((w) => ({ word: normalizeArabic(w.word), ok: true }));
     textCheck = 'demo';
   } else if (matchSource !== 'transcript') {
     // (ومنه التقييم اللحظي: لا يستمع بالألفاظ، فتُعرض تغطية الكلمات المسموعة — بلا اجتياز)
@@ -213,7 +233,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource = 'coverage';
     textCheck = 'unverified';
   } else {
-    textCheck = textCheckOf(transcriptMatch);
+    textCheck = scored ? textCheckOf(scored) : textCheckOf(transcriptMatch);
   }
 
   const textOk = textCheck === 'ok' || textCheck === 'demo';

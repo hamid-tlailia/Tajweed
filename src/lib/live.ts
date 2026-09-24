@@ -47,6 +47,8 @@ export interface LiveWordEvent {
   measured: boolean;
   /** حكمٌ صدر عند الإيقاف (الحكم الختامي) لا أثناء التلاوة — فلا تنبيهَ لحظيًّا له */
   final?: boolean;
+  /** كلمةٌ من البادئة (البسملة قبل الآية) — ليست من الآية */
+  prefix?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -157,6 +159,15 @@ const RECONSIDER_TEMPO_MIN = 0.45;
 const RECONSIDER_TEMPO_MAX = 2.2;
 /** لا يُبدَّل الإسناد القائم إلا إن كان البديل أرخصَ منه بهذا الهامش */
 const RECONSIDER_MARGIN = 0.3;
+/**
+ * في مراجعة الدمج: كلماتٌ قصار متتالية (كـ«قل هو») قد لا يُسمع بينها حدٌّ أصلًا،
+ * فيُسمح لها بتقاسم مقطعٍ واحد بحدودٍ تقديرية — بكلفة حدٍّ تقديري لكل قسمة،
+ * وبحدٍّ أقصى من الكلمات للمقطع الواحد.
+ */
+const GROUP_SPLIT = 0.55;
+const MAX_GROUP = 3;
+/** الكلمة «القصيرة» (بسرعة الفرض): دون هذا الزمن قد يفوت حدُّها كاشفَ الطاقة */
+const GROUP_SHORT_MS = 380;
 /** أقصى عدد إشاراتٍ تُتجاهَل داخل كلمةٍ واحدة (يحدّ زمن الجدول) */
 const MAX_LOOKBACK = 14;
 
@@ -218,6 +229,10 @@ export class LiveTajweedTracker {
   private lastT = 0;
   private started = false;
   private finished = false;
+  /** جُمّدت: المقروء ليس نصّ الآية (لا تقدّم ولا أحكام بعدها) */
+  private frozen = false;
+  /** عدد كلمات البادئة (بسملةٌ ابتدأ بها القارئ قبل الآية) في أول القائمة — لا تُعرض ولا تُحسب */
+  private prefixCount = 0;
   private voicedTotal = 0;
   private lastVoiceT = 0;
   private silenceMs = 0;
@@ -304,6 +319,7 @@ export class LiveTajweedTracker {
     if (this.finished || !this.tjs.length) return;
     const dt = this.lastT ? Math.max(0, Math.min(90, tMs - this.lastT)) : 16;
     this.lastT = tMs;
+    if (this.frozen) return; // لا تقدّم بعد التجميد (المقروء ليس الآية)
 
     // أرضية ضجيج تكيّفية
     const thr = Math.max(this.floorEma * 2.1, START_THR * 0.6, 0.007);
@@ -428,7 +444,8 @@ export class LiveTajweedTracker {
     skip: number[],
     v0: number,
     allowSkip = true,
-  ): { h: number[][]; bk: number[][] } {
+    maxGroup = 1,
+  ): { h: number[][]; bk: number[][]; bg: number[][] } {
     const W = E.length;
     const K = V.length;
     const INF = 1e9;
@@ -437,37 +454,97 @@ export class LiveTajweedTracker {
     for (let i = 0; i < K; i++) skipSum[i + 1] = skipSum[i] + skip[i];
     const h: number[][] = [];
     const bk: number[][] = [];
+    const bg: number[][] = []; // حجم المجموعة: كم كلمةً تقاسمت المقطع المنتهي عند i (١ = كلمة واحدة)
     for (let j = 0; j < W; j++) {
       const hj = new Array<number>(K).fill(INF);
       const bj = new Array<number>(K).fill(-9);
+      const gj = new Array<number>(K).fill(1);
       for (let i = 0; i < K; i++) {
         let best = INF;
         let bi = -9;
-        // أ) الكلمة j تأخذ المقطع (V[i2], V[i]] — وi2 = -1 يعني بدايةَ الجلسة
-        const lo = Math.max(j === 0 ? -1 : 0, i - MAX_LOOKBACK - 1);
-        for (let i2 = lo; i2 < i; i2++) {
-          const prev = j === 0 ? (i2 === -1 ? 0 : INF) : h[j - 1][i2];
-          if (prev >= INF) continue;
-          const start = i2 === -1 ? v0 : V[i2];
-          const skippedCost = skipSum[i] - skipSum[i2 + 1]; // الإشارات بين i2 وi (غير شاملة)
-          const c = prev + durCost(V[i] - start, E[j]) + skippedCost + CUE_COST[kinds[i]];
-          if (c < best) {
-            best = c;
-            bi = i2;
+        let bgv = 1;
+        // أ) الكلمات j-g+1..j تأخذ المقطع (V[i2], V[i]] — وi2 = -1 يعني بدايةَ الجلسة.
+        //    g = 1 هو الأصل؛ وg > 1 (في الحكم الختامي فقط) كلماتٌ متتالية لم يُسمع
+        //    بينها حدٌّ فتقاسمت مقطعًا واحدًا بحدودٍ تقديرية (بكلفة حدٍّ تقديري لكل قسمة).
+        let Eg = 0;
+        let shortInGroup = 0;
+        for (let g = 1; g <= Math.min(maxGroup, j + 1); g++) {
+          Eg += E[j - g + 1];
+          if (E[j - g + 1] < GROUP_SHORT_MS) shortInGroup++;
+          // لا تتقاسم كلماتٌ مقطعًا إلا إذا كانت القصارُ فيها (التي يفوت حدُّها
+          // الكاشفَ) كلَّها إلا واحدةً على الأكثر — فلا يُعاد تفسير كلماتٍ طوال
+          // قُرئت خطأً على أنها كلماتٌ اندمجت.
+          if (g > 1 && shortInGroup < g - 1) continue;
+          const jPrev = j - g;
+          const lo = Math.max(jPrev < 0 ? -1 : 0, i - MAX_LOOKBACK - 1);
+          for (let i2 = lo; i2 < i; i2++) {
+            const prev = jPrev < 0 ? (i2 === -1 ? 0 : INF) : h[jPrev][i2];
+            if (prev >= INF) continue;
+            const start = i2 === -1 ? v0 : V[i2];
+            const skippedCost = skipSum[i] - skipSum[i2 + 1]; // الإشارات بين i2 وi (غير شاملة)
+            const c = prev + durCost(V[i] - start, Eg) + skippedCost + CUE_COST[kinds[i]] + GROUP_SPLIT * (g - 1);
+            if (c < best) {
+              best = c;
+              bi = i2;
+              bgv = g;
+            }
           }
         }
         // ب) الكلمة j لم تُقرأ: لا مقطع لها، وتبقى الجبهة عند الإشارة i
         if (allowSkip && j > 0 && h[j - 1][i] + SKIP_WORD < best) {
           best = h[j - 1][i] + SKIP_WORD;
           bi = SKIPMARK;
+          bgv = 1;
         }
         hj[i] = best;
         bj[i] = bi;
+        gj[i] = bgv;
       }
       h.push(hj);
       bk.push(bj);
+      bg.push(gj);
     }
-    return { h, bk };
+    return { h, bk, bg };
+  }
+
+  /**
+   * استرجاع الإسناد مع المجموعات: لكل كلمةٍ حتى bestJ نهايتُها (زمنًا مصوّتًا)
+   * ونوعُ حدّها — والكلمات المتقاسمة مقطعًا تُقسم بمقاديرها بحدودٍ «تقديرية».
+   */
+  private backtrackGroups(
+    dp: { bk: number[][]; bg: number[][] },
+    bestJ: number,
+    open: OpenCues,
+    E: number[],
+  ): ({ endV: number; kind: LiveBoundary; cue: number } | null)[] {
+    const out: ({ endV: number; kind: LiveBoundary; cue: number } | null)[] = new Array(bestJ + 1).fill(null);
+    let j = bestJ;
+    let i = open.K - 1;
+    while (j >= 0 && i >= 0) {
+      const b = dp.bk[j][i];
+      if (b === SKIPMARK) {
+        out[j] = null;
+        j--;
+        continue;
+      }
+      if (b < -1) break;
+      const g = dp.bg[j][i];
+      const start = b === -1 ? open.v0 : open.V[b];
+      const end = open.V[i];
+      let Etot = 0;
+      for (let q = j - g + 1; q <= j; q++) Etot += E[q];
+      let acc = 0;
+      for (let q = j - g + 1; q <= j; q++) {
+        acc += E[q];
+        out[q] =
+          q === j
+            ? { endV: end, kind: open.kinds[i], cue: open.idx[i] }
+            : { endV: start + (acc / Math.max(1, Etot)) * (end - start), kind: 'model', cue: -1 };
+      }
+      j -= g;
+      i = b;
+    }
+    return out;
   }
 
   /** استرجاع الإسناد من الجدول: لكل كلمةٍ حتى bestJ فهرسُ إشارة نهايتها (مطلقًا) أو SKIPMARK */
@@ -706,7 +783,7 @@ export class LiveTajweedTracker {
       this.lastBoundary = null;
       if (!opts.quiet) {
         this.onWord?.({
-          index: i,
+          index: i - this.prefixCount,
           word: this.words[i].word,
           status: 'silent',
           measuredMs: 0,
@@ -714,6 +791,7 @@ export class LiveTajweedTracker {
           boundary,
           measured: false,
           final: !!opts.final,
+          prefix: i < this.prefixCount,
         });
       }
       const tip = opts.quiet ? null : liveTip(this.words[i].word, this.tjs[i], 'silent');
@@ -769,7 +847,7 @@ export class LiveTajweedTracker {
 
     if (!opts.quiet) {
       this.onWord?.({
-        index: i,
+        index: i - this.prefixCount,
         word: this.words[i].word,
         status,
         measuredMs: measured,
@@ -777,8 +855,40 @@ export class LiveTajweedTracker {
         boundary,
         measured: acoustic,
         final: !!opts.final,
+        prefix: i < this.prefixCount,
       });
     }
+  }
+
+  /**
+   * إعادة التأسيس على بادئة: تبيّن (بالسماع اللحظي) أن القارئ ابتدأ بالبسملة
+   * وليست من الآية — فتُقدَّم كلماتُها على قائمة الكلمات، وتُعاد مطابقة كل
+   * الإشارات من أولها، ثم تستمرّ المرافقة. كلمات البادئة لا تُعرض ولا تُحسب في
+   * عدّاد الآية. يُستدعى مرةً واحدة، وقبل الإيقاف.
+   */
+  rebase(prefixTjs: WordTajweed[], prefixWords: { word: string }[]): void {
+    if (this.prefixCount || this.finished || !prefixTjs.length) return;
+    this.prefixCount = prefixTjs.length;
+    this.tjs = [...prefixTjs, ...this.tjs];
+    this.words = [...prefixTjs.map((t, i) => ({ word: prefixWords[i]?.word ?? t.word, tajweed: t })), ...this.words];
+    this.results = this.tjs.map(() => ({ status: 'pending' as LiveWordStatus, measuredMs: 0 }));
+    this.doneCount = 0;
+    this.okCount = 0;
+    this.violations = 0;
+    this.estimatedCount = 0;
+    this.ratios = [];
+    this.scale = 1;
+    this.committed = 0;
+    this.lastCommitV = 0;
+    this.commitCueIdx = -1;
+    this.pendingAssigned = 0;
+    this.lastAlert = null;
+    this.lastBoundary = null;
+    // إعادة المطابقة على ما تجمّع من إشارات (بلا تنبيهات: أحكامٌ أُعيد بناؤها)
+    const cb = this.onWord;
+    this.onWord = null;
+    if (this.cues.length) this.solve();
+    this.onWord = cb;
   }
 
   /**
@@ -800,7 +910,7 @@ export class LiveTajweedTracker {
     if (n > GLOBAL_MAX_WORDS || this.cues.length > GLOBAL_MAX_CUES) return false;
     const open = this.cueWindow(0, 0, GLOBAL_MAX_CUES, true);
     const K = open.K;
-    if (K < this.committed + 1) return false;
+    if (K < 1) return false;
     const elapsed = open.V[K - 1];
     if (elapsed < MIN_VOICED_MS) return false;
 
@@ -833,7 +943,7 @@ export class LiveTajweedTracker {
     const INF = 1e9;
     let bestC = INF;
     let bestJ = -1;
-    let bestBk: number[][] | null = null;
+    let bestDp: { dp: { h: number[][]; bk: number[][]; bg: number[][] }; E: number[] } | null = null;
     let cumE = 0;
     for (let j = 0; j < n; j++) {
       cumE += Ebase[j];
@@ -841,18 +951,18 @@ export class LiveTajweedTracker {
       const s = elapsed / cumE;
       if (s < RECONSIDER_TEMPO_MIN || s > RECONSIDER_TEMPO_MAX) continue;
       const E = Ebase.slice(0, j + 1).map((e) => e * s);
-      const { h, bk } = this.buildDp(E, open.V, open.kinds, open.skip, 0, false);
-      if (h[j][K - 1] >= INF) continue;
-      const c = h[j][K - 1] + TEMPO_W * Math.max(0, Math.abs(Math.log2(s)) - TEMPO_FREE_OCT) + SKIP_FINAL * (n - 1 - j);
+      const dp = this.buildDp(E, open.V, open.kinds, open.skip, 0, false, MAX_GROUP);
+      if (dp.h[j][K - 1] >= INF) continue;
+      const c = dp.h[j][K - 1] + TEMPO_W * Math.max(0, Math.abs(Math.log2(s)) - TEMPO_FREE_OCT) + SKIP_FINAL * (n - 1 - j);
       if (c < bestC) {
         bestC = c;
         bestJ = j;
-        bestBk = bk;
+        bestDp = { dp, E };
       }
     }
-    if (bestJ < 0 || !bestBk || bestC > cur - RECONSIDER_MARGIN) return false;
-    const assign = this.backtrack(bestBk, bestJ, open);
-    if (assign.some((a) => a < 0)) return false;
+    if (bestJ < 0 || !bestDp || bestC > cur - RECONSIDER_MARGIN) return false;
+    const plan = this.backtrackGroups(bestDp.dp, bestJ, open, bestDp.E);
+    if (plan.some((x) => !x)) return false;
 
     // إعادة الأحكام: ما سبق حكمُه يُحدَّث بصمت، وما لم يُحكم يُعلَن حكمًا ختاميًا
     const wasJudged = this.results.map((r) => r.status !== 'pending' && r.status !== 'current');
@@ -861,7 +971,11 @@ export class LiveTajweedTracker {
     this.okCount = 0;
     this.violations = 0;
     this.estimatedCount = 0;
-    const segs = assign.map((a, k) => ({ measured: Math.max(0, this.cues[a].v - (k ? this.cues[assign[k - 1]].v : 0)), kind: this.cues[a].kind }));
+    const segs = plan.map((x, k) => ({
+      measured: Math.max(0, x!.endV - (k ? plan[k - 1]!.endV : 0)),
+      kind: x!.kind,
+    }));
+    const lastCue = plan[bestJ]!.cue;
     // عدلة السرعة من المقاطع المقيسة (وسيطٌ صامد) — كما في التحليل الكامل
     const ratios: number[] = [];
     segs.forEach((sg, k) => {
@@ -873,8 +987,8 @@ export class LiveTajweedTracker {
     if (ratios.length) this.scale = scaleFromRatios(ratios);
     segs.forEach((sg, k) => this.commitWord(k, sg.measured, sg.kind, { final: true, quiet: wasJudged[k], adapt: false }));
     this.committed = bestJ + 1;
-    this.lastCommitV = this.cues[assign[bestJ]].v;
-    this.commitCueIdx = assign[bestJ];
+    this.lastCommitV = plan[bestJ]!.endV;
+    if (lastCue >= 0) this.commitCueIdx = lastCue;
     this.pendingAssigned = 0;
     return true;
   }
@@ -910,7 +1024,7 @@ export class LiveTajweedTracker {
         this.cues.push({ v: this.voicedTotal, kind: 'gap', depth: 1, t: this.lastT });
       }
     }
-    if (this.started) {
+    if (this.started && !this.frozen) {
       if (this.cues.length) {
         this.solveFinal();
         this.reconsiderMerged();
@@ -927,29 +1041,56 @@ export class LiveTajweedTracker {
   /** اللقطة اللحظية للعرض */
   snapshot(): LiveSnapshot {
     const n = this.tjs.length;
+    const P = this.prefixCount;
     const fi = this.frontierIdx();
     const idx = clamp(fi, 0, Math.max(0, n - 1));
     const win = this.windowOf(idx);
     const stalled = this.started && !this.finished && this.lastVoiceT ? this.lastT - this.lastVoiceT : 0;
-    const inWord = fi < n && this.started && !this.finished;
+    const inPrefix = fi < P && this.started && !this.finished;
+    const inWord = fi < n && fi >= P && this.started && !this.finished;
     const curV = this.voicedTotal - this.lastCueV();
+    // العدّادات لكلمات الآية وحدها (لا البادئة)
+    const vis = this.results.slice(P);
+    const judged = (st: LiveWordStatus) => st !== 'pending' && st !== 'current';
     return {
-      cursor: fi,
+      cursor: fi - P,
       started: this.started,
-      doneCount: this.doneCount,
-      okCount: this.okCount,
-      violations: this.violations,
-      estimatedCount: this.estimatedCount,
-      words: this.results.map((r) => ({ ...r })),
+      doneCount: vis.filter((r) => judged(r.status)).length,
+      okCount: vis.filter((r) => r.status === 'ok' || r.status === 'excellent').length,
+      violations: vis.filter((r) => r.status === 'short' || r.status === 'long' || r.status === 'silent').length,
+      estimatedCount: vis.filter((r) => r.boundary === 'model' && judged(r.status)).length,
+      words: vis.map((r) => ({ ...r })),
       currentVoicedMs: inWord ? Math.max(0, Math.round(curV)) : 0,
       currentExpectedMs: inWord ? this.expectedOf(idx) : 0,
       currentMinMs: inWord ? win.minMs : 0,
       currentMaxMs: inWord ? win.maxMs : 0,
       currentHarakat: inWord ? (this.tjs[idx]?.harakat ?? 0) : 0,
       stalledMs: Math.max(0, Math.round(stalled)),
-      lastAlert: this.lastAlert,
+      lastAlert: this.lastAlert && this.lastAlert.index >= P ? { ...this.lastAlert, index: this.lastAlert.index - P } : null,
       lastBoundary: this.lastBoundary,
       finished: this.finished,
+      voicedMs: Math.round(this.voicedTotal),
+      frozen: this.frozen,
+      inPrefix,
     };
+  }
+
+  /** مجموع الزمن المصوّت منذ البدء (م.ث) */
+  get voiced(): number {
+    return this.voicedTotal;
+  }
+
+  /**
+   * تجميد المرافقة: تبيّن (بالسماع الذكي أثناء التسجيل) أن المقروء ليس نصّ
+   * هذه الآية، فلا يتقدّم الضوء بعدُ على كلماتها ولا تُحكم كلمةٌ أخرى — فالمرافقة
+   * الحية إنما تُرافق **هذه** الآية. ما بقي يُترك «معلَّقًا» لا «لم يُسمع».
+   */
+  freeze(): void {
+    if (this.frozen) return;
+    this.frozen = true;
+    for (let q = this.committed; q < this.results.length; q++) {
+      if (this.results[q].status === 'current') this.results[q] = { status: 'pending', measuredMs: 0 };
+    }
+    this.pendingAssigned = 0;
   }
 }

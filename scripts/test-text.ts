@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { runAlignment } from '../src/lib/alignment';
 import { buildCoach } from '../src/lib/coach';
 import { normalizeForMatch, scoreTranscriptMatch, textCheckOf, TEXT_GATE_OK } from '../src/lib/match';
-import { buildTarget, targetTextOf } from '../src/lib/quran';
+import { buildTarget, targetTextOf, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords, normalizeArabic } from '../src/lib/tajweed';
 import type { SurahData, WordAlignment } from '../src/lib/types';
 
@@ -22,11 +22,11 @@ function check(name: string, cond: boolean, extra = '') {
 const quran = JSON.parse(readFileSync(new URL('../public/quran.json', import.meta.url), 'utf8'));
 function surah(id: number): SurahData {
   const s = quran.surahs.find((x: any) => x.id === id);
-  return {
+  return stripSurahBasmala({
     id,
     meta: { id, name: s.name, englishName: '', englishNameTranslation: '', revelationType: '', numberOfAyahs: s.ayahs.length },
     ayahs: s.ayahs.map((a: any) => ({ number: a.n, numberInSurah: a.n, text: a.text })),
-  };
+  });
 }
 const ayahText = (s: number, a: number): string => targetTextOf(buildTarget(surah(s), 'ayah', a));
 
@@ -53,6 +53,18 @@ console.log('════════ 1) التوحيد الإملائي: الر
   check('normalizeArabic لم يتغيّر (إِلَىٰ → الي)', normalizeArabic('إِلَىٰ') === 'الي', normalizeArabic('إِلَىٰ'));
 }
 
+console.log('\n════════ 1ب) البسملة ليست من أول السورة (إلا الفاتحة) ════════');
+{
+  const t112 = buildTarget(surah(112), 'ayah', 1);
+  check('الإخلاص ١ أربع كلمات بلا بسملة', t112.words.length === 4 && normalizeArabic(t112.words[0].word) === 'قل', t112.words.map((w) => w.word).join(' '));
+  const t1 = buildTarget(surah(1), 'ayah', 1);
+  check('الفاتحة ١ هي البسملة', t1.words.length === 4 && normalizeArabic(t1.words[0].word) === 'بسم', t1.words.map((w) => w.word).join(' '));
+  const t9 = buildTarget(surah(9), 'ayah', 1);
+  check('براءة ١ بلا بسملة أصلًا', normalizeArabic(t9.words[0].word) !== 'بسم', t9.words[0].word);
+  const t2 = buildTarget(surah(2), 'ayah', 1);
+  check('البقرة ١ = ﴿الۤمۤ﴾ وحدها', t2.words.length === 1, t2.words.map((w) => w.word).join(' '));
+}
+
 console.log('\n════════ 2) كلامٌ آخر وآيةٌ أخرى لا يجتازان البوّابة ════════');
 {
   const cases: [string, string, number, number][] = [
@@ -67,7 +79,7 @@ console.log('\n════════ 2) كلامٌ آخر وآيةٌ أخرى
   ];
   for (const [label, pred, s, a] of cases) {
     const r = gate(pred, s, a);
-    check(`${label}: mismatch`, textCheckOf(r.match) === 'mismatch', `${pct(r.match)} (استدعاء ${pct(r.recall)} · دقّة ${pct(r.precision)})`);
+    check(`${label}: mismatch`, textCheckOf(r) === 'mismatch', `${pct(r.match)} (استدعاء ${pct(r.recall)} · دقّة ${pct(r.precision)})`);
   }
 }
 
@@ -82,28 +94,46 @@ console.log('\n════════ 3) التلاوة الصحيحة (ولو
     ['الفاتحة ٢ ملتصقة كلها', 'الحمدللهربالعالمين', 1, 2],
     ['الفاتحة ٦', 'اهدنا الصراط المستقيم', 1, 6],
     ['الفلق ٢ بتحريف حرف', 'من شر ما خالق', 113, 2],
-    ['الإخلاص ١ بلا بسملة (والبسملة في نصّ المصحف)', 'قل هو الله أحد', 112, 1],
-    ['الإخلاص ١ بالبسملة', 'بسم الله الرحمن الرحيم قل هو الله أحد', 112, 1],
+    ['الإخلاص ١ (نصّ الآية بلا بسملة)', 'قل هو الله أحد', 112, 1],
+    ['الإخلاص ١ وقد ابتدأ القارئ بالبسملة (تُخرج من الحساب)', 'بسم الله الرحمن الرحيم قل هو الله أحد', 112, 1],
     ['آية الكرسي كاملة', 'الله لا إله إلا هو الحي القيوم لا تأخذه سنة ولا نوم له ما في السماوات وما في الأرض من ذا الذي يشفع عنده إلا بإذنه يعلم ما بين أيديهم وما خلفهم ولا يحيطون بشيء من علمه إلا بما شاء وسع كرسيه السماوات والأرض ولا يئوده حفظهما وهو العلي العظيم', 2, 255],
     ['الكوثر ١ بلا بسملة', 'إنا أعطيناك الكوثر', 108, 1],
     ['البقرة ٢', 'ذلك الكتاب لا ريب فيه هدى للمتقين', 2, 2],
   ];
   for (const [label, pred, s, a] of cases) {
     const r = gate(pred, s, a);
-    check(`${label}: ok`, textCheckOf(r.match) === 'ok', `${pct(r.match)} — ${r.predWords.map((w) => (w.ok ? w.word : `✗${w.word}`)).join(' ')}`);
+    check(`${label}: ok`, textCheckOf(r) === 'ok', `${pct(r.match)} — ${r.predWords.map((w) => (w.prefix ? `[${w.word}]` : w.ok ? w.word : `✗${w.word}`)).join(' ')}`);
   }
+  const bsm = gate('بسم الله الرحمن الرحيم قل هو الله أحد', 112, 1);
+  check('البسملة قبل الآية تُعلَّم بادئةً لا زيادة', bsm.basmalaPrefix && bsm.predWords.filter((w) => w.prefix).length === 4 && bsm.precision === 1, JSON.stringify(bsm.predWords.slice(0, 5)));
+  const onlyBsm = gate('بسم الله الرحمن الرحيم', 112, 1);
+  check('البسملة وحدها ليست الآية', textCheckOf(onlyBsm) === 'mismatch', pct(onlyBsm.match));
+  const fatiha1 = gate('بسم الله الرحمن الرحيم', 1, 1);
+  check('في الفاتحة البسملة هي الآية الأولى', textCheckOf(fatiha1) === 'ok', pct(fatiha1.match));
   // نصف الآية يمرّ من البوّابة (ويحسمه حكمُ الأزمنة: كلماتٌ «لم تُسمع»)
   const half = gate('الله لا إله إلا هو الحي القيوم لا تأخذه سنة ولا نوم له ما في السماوات وما في الأرض', 2, 255);
-  check('نصف آية الكرسي يمرّ (ويحسمه التوقيت)', textCheckOf(half.match) !== 'mismatch', pct(half.match));
+  check('نصف آية الكرسي: ضعيف (كلماتٌ كثيرة لم تُقرأ) لا «بعيد»', textCheckOf(half) === 'weak', pct(half.match));
   const superset = gate('الرحمن الرحيم مالك يوم الدين', 1, 3);
-  check('الآية مع التي تليها تمرّ (زيادةٌ لا نقص)', textCheckOf(superset.match) === 'ok', pct(superset.match));
-  // آيتان لا تختلفان إلا في كلمة: البوّابة تمرّ (٣ من ٤) — والكلمة المختلفة تُعلَّم وتُذكر
+  check('الآية مع التي تليها تمرّ (زيادةٌ لا نقص)', textCheckOf(superset) === 'ok', pct(superset.match));
+  // آيتان لا تختلفان إلا في كلمة: النسبة الكلية عالية (٣ من ٤) لكن كلمةً بُدّلت → لا تمرّ
   const near = gate('قل أعوذ برب الناس', 113, 1);
   check(
-    'الناس ١ بدل الفلق ١: تمرّ البوّابة لكن «الفلق» تُعلَّم غائبة و«الناس» زائدة',
-    textCheckOf(near.match) === 'ok' && near.targetHit[3] === false && near.predWords[3].ok === false,
-    `${pct(near.match)} — ${near.targetHit.join(',')}`,
+    'الناس ١ بدل الفلق ١: لا تمرّ — «الفلق» غائبة وسُمع بدلها «الناس»',
+    textCheckOf(near) === 'weak' && near.missing.length === 1 && near.missing[0].heard === 'الناس' && near.predWords[3].ok === false,
+    `${pct(near.match)} — ${JSON.stringify(near.missing)}`,
   );
+  const subst = gate('قل هو الله الصمد', 112, 1);
+  check('«الصمد» موضع «أحد»: إبدالٌ يُغلق البوّابة', textCheckOf(subst) === 'weak' && subst.missing[0]?.heard === 'الصمد', JSON.stringify(subst.missing));
+  const dropped = gate('الحمد لله رب', 1, 2);
+  check('إسقاط آخر كلمة في آيةٍ قصيرة يُغلق البوّابة', textCheckOf(dropped) === 'weak' && dropped.missing[0]?.word === 'العالمين' && !dropped.missing[0]?.heard, JSON.stringify(dropped.missing));
+  const garbled = gate('اهدنا الصراط المستقين', 1, 6);
+  check('تحريف سماعٍ يسير («المستقين») لا يُغلقها', textCheckOf(garbled) === 'ok', `${pct(garbled.match)} garbled=${garbled.garbled}`);
+  const longDrop = gate(
+    'الله لا إله إلا هو الحي القيوم لا تأخذه سنة ولا نوم له ما في السماوات وما في الأرض من ذا الذي يشفع عنده إلا بإذنه يعلم ما بين أيديهم وما خلفهم ولا يحيطون بشيء من علمه إلا بما شاء وسع كرسيه السماوات والأرض ولا يئوده حفظهما وهو العظيم',
+    2,
+    255,
+  );
+  check('آية الكرسي ناقصةً كلمةً واحدة (العلي): تُغتفر في الطوال', textCheckOf(longDrop) === 'ok' && longDrop.missing.length === 1, JSON.stringify(longDrop.missing));
   const empty = scoreTranscriptMatch('hello world', ayahText(1, 3));
   check('نصّ لاتيني = فارغ', empty.empty && empty.match === 0);
 }

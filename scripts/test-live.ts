@@ -242,6 +242,8 @@ console.log('\n──── المدّ الممسوك ────');
   const W2 = ['ٱلرَّحۡمَـٰنِ', 'ٱلرَّحِیمِ'];
   const W3 = ['مَـٰلِكِ', 'یَوۡمِ', 'ٱلدِّینِ'];
   const W4 = ['ٱلۡحَمۡدُ', 'لِلَّهِ', 'رَبِّ', 'ٱلۡعَـٰلَمِينَ'];
+  const IKHLAS = ['قُلۡ', 'هُوَ', 'ٱللَّهُ', 'أَحَدٌ'];
+  const FALAQ = ['قُلۡ', 'أَعُوذُ', 'بِرَبِّ', 'ٱلۡفَلَقِ'];
 
   for (const [label, words, mult, gap, tail] of [
     ['كلمتان ×٠٫٦ متصلتان ثم صمت', W2, 0.6, 0, 400],
@@ -253,6 +255,8 @@ console.log('\n──── المدّ الممسوك ────');
     ['أربع ×٠٫٥ بسكتات ثم إيقاف فوري', W4, 0.5, 80, 0],
     ['أربع ×١٫٤ متصلة (أبطأ من المرتبة)', W4, 1.4, 0, 400],
     ['أربع ×١ بسكتات', W4, 1, 120, 300],
+    ['الإخلاص ×٠٫٦ متصلة (كلمات قصار بلا حدٍّ مسموع → تقاسمٌ تقديري)', IKHLAS, 0.6, 0, 400],
+    ['الفلق ×٠٫٥ متصلة («قل» القصيرة تندمج بما بعدها)', FALAQ, 0.5, 0, 400],
   ] as const) {
     const { snap: sn } = synth([...words], mult, gap, tail);
     const last = sn.words[sn.words.length - 1];
@@ -295,6 +299,49 @@ console.log('\n──── المدّ الممسوك ────');
     );
     check('عدّاد المقروء يعكس ذلك', sn.doneCount === 4 && sn.okCount === 2, `${sn.doneCount}/${sn.okCount}`);
   }
+}
+
+/* ================================================================== */
+/* البسملة قبل الآية: إعادة التأسيس (rebase) بعد أن يكشفها السماع اللحظي     */
+/* ================================================================== */
+{
+  const BASMALA = ['بِسۡمِ', 'ٱللَّهِ', 'ٱلرَّحۡمَـٰنِ', 'ٱلرَّحِیمِ'];
+  const AYAH = ['قُلۡ', 'هُوَ', 'ٱللَّهُ', 'أَحَدٌ'];
+  const btjs = analyzeWords(BASMALA, 'hafs', 'tartil');
+  const atjs = analyzeWords(AYAH, 'hafs', 'tartil');
+  const ev: { index: number; status: WordStatus; prefix?: boolean }[] = [];
+  const trk = new LiveTajweedTracker(atjs, AYAH.map((w) => ({ word: w })), 0.8, (e) => ev.push({ index: e.index, status: e.status, prefix: e.prefix }));
+  let tt = 0;
+  const feed = (rms: number, ms: number) => {
+    for (let i = 0; i < Math.round(ms / 10); i++, tt += 10) trk.feed(rms, tt);
+  };
+  const say = (t: { expectedMs: number }[]) => {
+    for (const w of t) {
+      feed(0.3, w.expectedMs);
+      feed(0.0005, 120);
+    }
+  };
+  feed(0.0005, 300);
+  say(btjs.slice(0, 2)); // «بسم الله» — قبل أن يكشفها السماع
+  const before = trk.snapshot();
+  check('قبل الكشف: كلمات البسملة تُحسب خطأً على الآية', before.doneCount >= 1, `${before.doneCount}`);
+  trk.rebase(btjs, BASMALA.map((w) => ({ word: w })));
+  const mid = trk.snapshot();
+  check('بعد إعادة التأسيس: لا كلمةَ من الآية محكومة', mid.doneCount === 0 && mid.words.length === 4, `${mid.doneCount}/${mid.words.length}`);
+  say(btjs.slice(2)); // «الرحمن الرحيم»
+  const inP = trk.snapshot();
+  check('أثناء البسملة: المؤشر قبل الآية (inPrefix)', inP.inPrefix || inP.cursor <= 0, `${inP.cursor} ${inP.inPrefix}`);
+  say(atjs); // الآية
+  feed(0.0005, 400);
+  trk.finish();
+  const sn = trk.snapshot();
+  check(
+    'الآية بعد البسملة: كلماتها الأربع في المقدار',
+    sn.words.length === 4 && sn.words.every((w) => w.status === 'ok' || w.status === 'excellent'),
+    sn.words.map((w) => w.status).join(' · '),
+  );
+  check('عدّاد الآية لا يشمل البسملة', sn.doneCount === 4 && sn.okCount === 4, `${sn.doneCount}/${sn.okCount}`);
+  check('أحداث الآية بفهارسها (٠..٣) والبسملة موسومة prefix', ev.some((e) => e.prefix) && ev.filter((e) => !e.prefix).every((e) => e.index >= 0 && e.index < 4), JSON.stringify(ev.slice(-4)));
 }
 
 if (fails) {

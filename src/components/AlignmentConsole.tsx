@@ -469,7 +469,11 @@ export default function AlignmentConsole() {
           <p className="mt-2 font-quran text-lg leading-9 text-slate-200">
             {result.predWords.length ? (
               result.predWords.map((w, i) => (
-                <span key={i} className={w.ok ? '' : 'rounded bg-danger-500/15 px-1 text-danger-300'}>
+                <span
+                  key={i}
+                  title={w.prefix ? 'بسملةٌ قبل الآية — لا تُحسب منها' : undefined}
+                  className={w.prefix ? 'text-slate-500' : w.ok ? '' : 'rounded bg-danger-500/15 px-1 text-danger-300'}
+                >
                   {w.word}{' '}
                 </span>
               ))

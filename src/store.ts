@@ -1,7 +1,7 @@
 // TAHQĪQ — global app store (zustand)
 
 import { create } from 'zustand';
-import { runAlignment } from '@/lib/alignment';
+import { engineAlign, engineLoadModel } from '@/lib/engine';
 import { compareWithReciter } from '@/lib/compare';
 import { decodeBlobTo16k } from '@/lib/audio';
 import { fetchSurah, fetchSurahs, buildTarget } from '@/lib/quran';
@@ -20,7 +20,6 @@ import type {
   ThemeMode,
 } from '@/lib/types';
 import { PASS_SCORE } from '@/lib/types';
-import { loadWhisper } from '@/lib/whisper';
 
 const surahCache = new Map<number, SurahData>();
 const fileProgress = new Map<string, number>();
@@ -164,6 +163,8 @@ interface TahqiqStore {
   refKeyOf: () => string; // مفتاح مرجع الآية/الرواية/المرتبة الحالية
 
   init: () => Promise<void>;
+  /** تجهيز السماع الذكي تلقائيًّا إن لم يكن قد جُهِّز (ولا يُعاد بعد فشل) */
+  autoLoadModel: () => void;
   setTheme: (t: ThemeMode) => void;
   setAlertOn: (b: boolean) => void;
   selectSurah: (id: number) => void;
@@ -275,7 +276,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       const samples = await decodeBlobTo16k(blob);
 
       const target = buildTarget(data, 'ayah', selectedAyah);
-      const res = await runAlignment(
+      const res = await engineAlign(
         { samples, url: null, demo: false },
         { tau, modelSize, target, riwayah, tempo },
         {
@@ -337,6 +338,15 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
     } catch {
       set({ surahsStatus: 'error' });
     }
+    // السماع الذكي شرطُ الاجتياز (التحقّق من أنّ المقروء هو الآية)، فيُجهَّز تلقائيًّا
+    // عند الفتح — مرةً واحدة ثم يُخزَّن في المتصفّح ويعمل دون إنترنت.
+    get().autoLoadModel();
+  },
+
+  autoLoadModel: () => {
+    if (get().modelStatus !== 'idle') return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    void get().loadModel();
   },
 
   selectSurah: (id) => {
@@ -383,7 +393,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
     fileProgress.clear();
     set({ modelStatus: 'loading', modelProgress: 0, modelMessage: null });
     try {
-      await loadWhisper(size, (p) => {
+      await engineLoadModel(size, (p) => {
         fileProgress.set(p.file || 'file', p.progress ?? 0);
         const vals = [...fileProgress.values()];
         const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;

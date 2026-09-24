@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { runAlignment } from '@/lib/alignment';
+import { engineAlign, engineTranscribe } from '@/lib/engine';
 import { Recorder, decodeBlobTo16k, makeDemoSamples } from '@/lib/audio';
 import { LiveTajweedTracker } from '@/lib/live';
-import { buildTarget } from '@/lib/quran';
+import { editClose, matchTokens, scoreTranscriptMatch } from '@/lib/match';
+import { BASMALA_WORDS, buildTarget, targetTextOf } from '@/lib/quran';
 import { analyzeTargetWords, analyzeWords } from '@/lib/tajweed';
-import type { LiveSnapshot, ModelEvent } from '@/lib/types';
+import type { LiveSnapshot, LiveTextCheck, ModelEvent } from '@/lib/types';
 import { fmtTime, waveThemeColors } from '@/lib/util';
 import { wordViolation } from '@/lib/haptics';
 import { useTahqiq } from '@/store';
@@ -111,6 +112,24 @@ export default function RecorderPanel() {
   const [hasLastInput, setHasLastInput] = useState(false);
   const [live, setLive] = useState<LiveSnapshot | null>(null);
   const liveWords = live ? live : null;
+  /** التحقّق اللحظي من النصّ أثناء المرافقة الحية (بالسماع الذكي في العامل) */
+  const [liveText, setLiveText] = useState<LiveTextCheck | null>(null);
+  const liveTextRef = useRef<{
+    busy: boolean;
+    lastVoiced: number;
+    lastEnd: number;
+    heard: string[];
+    strikes: number;
+    fails: number;
+    done: boolean;
+    rebased: boolean;
+  }>({ busy: false, lastVoiced: 0, lastEnd: 0, heard: [], strikes: 0, fails: 0, done: false, rebased: false });
+  /** بداية جلسة المرافقة الحية (لربط نتيجة التحليل الكامل بها) ونصّ آيتها للمطابقة */
+  const [liveStartedAt, setLiveStartedAt] = useState(0);
+  const liveTargetTextRef = useRef('');
+  const result = useTahqiq((s) => s.result);
+  const refining = useTahqiq((s) => s.refining);
+  const modelStatus = useTahqiq((s) => s.modelStatus);
 
   useEffect(() => {
     const c = canvasRef.current;
@@ -154,15 +173,88 @@ export default function RecorderPanel() {
     const tjs = analyzeTargetWords(target.words, riwayah, tempo);
     livePushRef.current = 0;
     setLive(null);
+    liveTextRef.current = { busy: false, lastVoiced: 0, lastEnd: 0, heard: [], strikes: 0, fails: 0, done: false, rebased: false };
+    liveTargetTextRef.current = targetTextOf(target);
+    const ready = useTahqiq.getState().modelStatus === 'ready';
+    setLiveText({ status: ready ? 'checking' : 'off', heard: 0, precision: 0, text: '' });
+    setLiveStartedAt(Date.now());
     trackerRef.current = new LiveTajweedTracker(tjs, target.words, tau, (e) => {
       const { alertOn: alerts } = useTahqiq.getState();
-      // الأحكام الختامية (عند الإيقاف) تُعرض ولا تُهزّ: القارئ ضغط الإيقاف لتوّه
-      if (!e.final && alerts && (e.status === 'short' || e.status === 'long' || e.status === 'silent')) {
+      // الأحكام الختامية (عند الإيقاف) تُعرض ولا تُهزّ: القارئ ضغط الإيقاف لتوّه — وكذلك البسملة قبل الآية
+      if (!e.final && !e.prefix && alerts && (e.status === 'short' || e.status === 'long' || e.status === 'silent')) {
         wordViolation(e.status);
       }
       const t = trackerRef.current;
       if (t) setLive(t.snapshot()); // تحديث فوري عند إقفال كلمة
     });
+  }
+
+  /**
+   * التحقّق اللحظي من النصّ أثناء التسجيل: كل نحو ثانيتين ونصف من الصوت يُفرَّغ
+   * ما استجدّ منه (مع تداخلٍ يسير) في العامل، ويُضمّ إلى ما سُمع قبله، ثم تُقاس
+   * **دقّةُ** المسموع (نسبة ما هو من الآية فيه) — لا استدعاؤه، فالقارئ لم يُكمل
+   * بعد. إن تبيّن مرتين متتاليتين أن المسموع ليس من الآية جُمّدت المرافقة:
+   * فهي إنما تُرافق هذه الآية، ولا «تمرّ» تلاوةُ غيرها فيها.
+   */
+  function maybeLiveCheck(tracker: LiveTajweedTracker, rec: Recorder) {
+    const st = liveTextRef.current;
+    if (st.done || st.busy) return;
+    const { modelStatus: ms, modelSize: size } = useTahqiq.getState();
+    if (ms !== 'ready') return;
+    const voiced = tracker.voiced;
+    if (voiced - st.lastVoiced < 2500) return;
+    if (rec.pcmSamples - st.lastEnd < 16000 * 1.5) return;
+    const targetText = liveTargetTextRef.current;
+    if (!targetText) return;
+    st.busy = true;
+    st.lastVoiced = voiced;
+    const from = Math.max(0, Math.max(st.lastEnd - 8000, rec.pcmSamples - 16000 * 12));
+    const win = rec.pcm16k(from);
+    st.lastEnd = rec.pcmSamples;
+    engineTranscribe(win, size)
+      .then((text) => {
+        if (trackerRef.current !== tracker || st.done) return;
+        const toks = matchTokens(text);
+        // تداخل النافذتين: قد تتكرّر آخر كلمةٍ مسموعة في أول النافذة التالية
+        const last = st.heard[st.heard.length - 1];
+        if (last && toks.length && (toks[0] === last || editClose(toks[0], last))) toks.shift();
+        st.heard.push(...toks);
+        const sc = scoreTranscriptMatch(st.heard.join(' '), targetText);
+        const heardN = sc.predWords.filter((w) => !w.prefix).length;
+        // ابتدأ القارئ بالبسملة وليست من الآية: تُقدَّم على كلمات المرافقة وتُعاد المطابقة
+        if (sc.basmalaPrefix && !st.rebased) {
+          st.rebased = true;
+          const prefixWords = BASMALA_WORDS.map((w) => ({ word: w, ayah: selectedAyah }));
+          tracker.rebase(analyzeTargetWords(prefixWords, riwayah, tempo), prefixWords);
+          setLive(tracker.snapshot());
+        }
+        let status: LiveTextCheck['status'];
+        if (heardN < 3) status = 'checking';
+        else if (sc.precision >= 0.5) {
+          status = 'same';
+          st.strikes = 0;
+        } else if (sc.precision < 0.34) {
+          st.strikes++;
+          status = st.strikes >= 2 ? 'other' : 'warn';
+        } else status = 'unsure';
+        if (status === 'other') {
+          st.done = true;
+          tracker.freeze();
+          if (useTahqiq.getState().alertOn) wordViolation('silent');
+          setLive(tracker.snapshot());
+        }
+        setLiveText({ status, heard: heardN, precision: sc.precision, text: st.heard.join(' ') });
+      })
+      .catch((e) => {
+        console.warn('[TAHQIQQ] live text check failed:', e);
+        if (++st.fails >= 2) {
+          st.done = true;
+          setLiveText({ status: 'off', heard: 0, precision: 0, text: '' });
+        }
+      })
+      .finally(() => {
+        st.busy = false;
+      });
   }
 
   /** التحليل الكامل (بالسماع الذكي إن كان مُجهَّزًا) — يحجز الواجهة حتى ينتهي */
@@ -175,7 +267,7 @@ export default function RecorderPanel() {
     const target = buildTarget(data, scope, selectedAyah);
     setProcessing(true, input.demo ? 'محاكاة تلاوة للتجربة…' : 'تهيئة الصوت…');
     try {
-      const res = await runAlignment(
+      const res = await engineAlign(
         input,
         { tau, modelSize, target, riwayah, tempo },
         {
@@ -205,7 +297,7 @@ export default function RecorderPanel() {
     const target = buildTarget(data, scope, selectedAyah);
     setRefining(true);
     try {
-      const res = await runAlignment(input, { tau, modelSize, target, riwayah, tempo }, { stage: () => {}, model: modelHook });
+      const res = await engineAlign(input, { tau, modelSize, target, riwayah, tempo }, { stage: () => {}, model: modelHook });
       if (sessionRef.current === session && !res.demo) setResult(res);
     } catch (e) {
       // تبقى النتيجة اللحظية معروضة — لا يُفسد التحسينُ الخلفي ما ظهر
@@ -234,7 +326,7 @@ export default function RecorderPanel() {
     setProcessing(true, 'قياس لحظي للأزمنة…');
     let quick = null;
     try {
-      quick = await runAlignment(input, { tau, modelSize, target, riwayah, tempo, fast: true }, { stage: () => {} });
+      quick = await engineAlign(input, { tau, modelSize, target, riwayah, tempo, fast: true }, { stage: () => {} });
     } catch (e) {
       console.warn('[TAHQIQQ] instant pass failed:', e);
     }
@@ -242,8 +334,10 @@ export default function RecorderPanel() {
     setProcessing(false, '');
     if (!quick || sessionRef.current !== session) return;
     setResult(quick); // تظهر النتيجة الآن — والقارئ لا ينتظر
+    // التحليل الأدقّ بالسماع الذكي يستكمل في الخلفية (ويُنزَّل النموذج إن لم يكن
+    // قد نُزِّل) — فبه وحده يُعتمد الاجتياز. لا يُعاد بعد فشل تنزيلٍ سابق.
     const { modelStatus } = useTahqiq.getState();
-    if (modelStatus === 'ready' || modelStatus === 'loading') void refineInBackground(input, session);
+    if (modelStatus !== 'error') void refineInBackground(input, session);
   }
 
   async function onToggleRecord() {
@@ -276,6 +370,7 @@ export default function RecorderPanel() {
         if (!tracker) return;
         tracker.feed(rms, tMs);
         pushLive(tracker);
+        maybeLiveCheck(tracker, r);
       };
       try {
         await r.start();
@@ -417,6 +512,14 @@ export default function RecorderPanel() {
           recording={recording}
           alertOn={alertOn}
           onToggleAlerts={() => setAlertOn(!alertOn)}
+          textCheck={liveText}
+          finalText={
+            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt
+              ? result.textCheck
+              : null
+          }
+          refining={refining}
+          modelReady={modelStatus === 'ready'}
         />
       ) : null}
     </Panel>

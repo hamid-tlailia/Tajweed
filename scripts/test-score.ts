@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import { runAlignment } from '../src/lib/alignment';
-import { buildTarget } from '../src/lib/quran';
+import { buildTarget, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords } from '../src/lib/tajweed';
 import { mulberry32 } from '../src/lib/util';
 import type { SurahData, Tempo } from '../src/lib/types';
@@ -23,7 +23,7 @@ function check(name: string, cond: boolean, extra = '') {
 const quran = JSON.parse(readFileSync(new URL('../public/quran.json', import.meta.url), 'utf8'));
 function surah(id: number): SurahData {
   const s = quran.surahs.find((x: any) => x.id === id);
-  return {
+  return stripSurahBasmala({
     id,
     meta: {
       id,
@@ -34,7 +34,7 @@ function surah(id: number): SurahData {
       numberOfAyahs: s.ayahs.length,
     },
     ayahs: s.ayahs.map((a: any) => ({ number: a.n, numberInSurah: a.n, text: a.text })),
-  };
+  });
 }
 
 /** توليد تلاوة من أزمنة محدَّدة لكل كلمة (غلاف مسطّح، وفواصل صمت) */

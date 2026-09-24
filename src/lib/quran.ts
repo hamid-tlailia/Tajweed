@@ -4,6 +4,7 @@
 
 import type { SurahData, SurahMeta, TargetSpec } from './types';
 import { normalizeForMatch } from './match';
+import { normalizeArabic } from './tajweed';
 
 async function getJson(url: string, timeoutMs = 8000): Promise<any> {
   const ctl = new AbortController();
@@ -29,17 +30,46 @@ export async function fetchSurahs(): Promise<SurahMeta[]> {
   throw new Error('تعذّر جلب فهرس السور');
 }
 
+/** كلمات البسملة بالرسم العثماني (كما ترد في نصّ المصحف) */
+export const BASMALA_WORDS = ['بِسۡمِ', 'ٱللَّهِ', 'ٱلرَّحۡمَـٰنِ', 'ٱلرَّحِیمِ'] as const;
+const BASMALA_KEY = 'بسم الله الرحمن الرحيم';
+
+/** هل تبدأ هذه الكلمات بالبسملة (بأيّ رسم)؟ */
+export function startsWithBasmalaWords(words: string[]): boolean {
+  if (words.length < 4) return false;
+  return words.slice(0, 4).map(normalizeArabic).join(' ') === BASMALA_KEY;
+}
+
+/**
+ * البسملة ليست من أول آيةٍ في السورة (إلا في الفاتحة، وليست في براءة أصلًا)،
+ * ونصُّ المصحف الوارد من المصدر يُلصقها بالآية الأولى — فتُنزَع منه هنا عند
+ * التحميل، فلا تُعرض ولا تُقاس ولا تدخل في المطابقة على أنها من الآية.
+ */
+export function stripSurahBasmala(data: SurahData): SurahData {
+  if (data.id === 1 || data.id === 9) return data;
+  const first = data.ayahs.find((a) => a.numberInSurah === 1);
+  if (!first) return data;
+  const clean = first.text.replace(/[\u200A\u2060\u200C\uFEFF]/g, '');
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (!startsWithBasmalaWords(words)) return data;
+  const rest = words.slice(4).join(' ');
+  return {
+    ...data,
+    ayahs: data.ayahs.map((a) => (a === first ? { ...a, text: rest } : a)),
+  };
+}
+
 export async function fetchSurah(id: number): Promise<SurahData> {
   try {
     const j = await getJson(`/api/quran/surah/${id}`, 8000);
-    if (j?.data?.ayahs?.length) return j.data as SurahData;
+    if (j?.data?.ayahs?.length) return stripSurahBasmala(j.data as SurahData);
   } catch {
     /* fall through to local bundle */
   }
   const j = await getJson('/quran.json', 30000);
   const s = (j?.surahs ?? []).find((x: any) => x.id === id);
   if (s) {
-    return {
+    return stripSurahBasmala({
       id: s.id,
       meta: {
         id: s.id,
@@ -50,7 +80,7 @@ export async function fetchSurah(id: number): Promise<SurahData> {
         numberOfAyahs: s.ayahs.length,
       },
       ayahs: s.ayahs.map((a: any) => ({ number: a.n, numberInSurah: a.n, text: a.text })),
-    };
+    });
   }
   throw new Error('تعذّر جلب نصّ السورة');
 }

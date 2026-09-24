@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import DeviceGuards from '@/components/DeviceGuards';
 import PWARegister from '@/components/PWARegister';
 import './globals.css';
 
@@ -10,6 +11,13 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: '#070B10',
+  width: 'device-width',
+  initialScale: 1,
+  // لا تكبير بالأصابع ولا بالفأرة: واجهة التطبيق ثابتة المقياس (يُكمَّل في DeviceGuards)
+  maximumScale: 1,
+  minimumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
 };
 
 const FAVICON =
@@ -39,7 +47,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen overflow-x-clip bg-ink-950 font-sans text-slate-100 antialiased">
         <PWARegister />
+        <DeviceGuards />
         {children}
+        <div className="orientation-guard" role="dialog" aria-live="polite">
+          <span className="rotate-icon" aria-hidden>
+            📱
+          </span>
+          <p className="font-quran text-xl">أدِر هاتفك إلى الوضع الرأسي</p>
+          <p className="text-sm text-slate-400">تطبيق تَحَقُّق يعمل في الوضع الرأسي فقط.</p>
+        </div>
       </body>
     </html>
   );
