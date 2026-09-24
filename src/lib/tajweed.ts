@@ -256,28 +256,54 @@ const MADD_PROFILE: Record<Riwayah, Record<MaddKind, number>> = {
 };
 
 /**
- * حروف فواتح السور تُهجَّى بأسمائها، فزمنُها زمنُ الاسم لا زمنُ الحرف.
- * [المركز، الأدنى، الأعلى] بالحركات لكل حرف من (نقص عسلكم) وأخواتها:
- * لَام/مِيم/سِين/كَاف/صَاد/قَاف/نُون = حرف + مدّ لازم حرفي (٦) + حرف ← ٧،
- * وأَلِف/رَا/طَا/حَا/يَا/هَا = مدّ طبيعي ← نحو ٢٫٥–٣، وعَين (كهيعص) حرف لين
- * فيه القصر والتوسط والإشباع.
+ * حروف فواتح السور تُهجَّى **بأسمائها** لا بأصواتها: «الٓمٓ» ← أَلِفْ · لَامْ · مِيمْ.
+ * ومن الاسم تُؤخذ الأحكام والأزمنة كلُّها (تحفة الأطفال):
+ *   • «واللازمُ الحرفيُّ أولَ السُّوَرْ … يجمعُها حروفُ كَمْ عَسَلْ نَقَصْ»: ما هجاؤه
+ *     ثلاثةُ أحرفٍ أوسطُها حرفُ مدّ (لَامْ مِيمْ نُونْ قَافْ صَادْ سِينْ كَافْ) فمدُّه
+ *     لازمٌ ستَّ حركات — «مُثقَّلٌ» إن أُدغم آخرُ اسمه فيما بعده (لَامْ مِيمْ ← لَامِّيمْ)،
+ *     و«مُخفَّفٌ» إن لم يُدغم (مِيمْ في آخر الٓمٓ).
+ *   • «وعينُ ذو وجهينِ والطولُ أخَصّ»: عَيْنْ (كهيعص · عسق) حرفُ لينٍ بعده سكونٌ أصلي،
+ *     فيها التوسّط (٤) والإشباع (٦) والإشباعُ مقدَّم.
+ *   • «وذاك أيضًا في فواتح السُّوَرْ في لفظ حيٌّ طاهرٌ»: حَا يَا طَا هَا رَا — مدٌّ طبيعيٌّ حرفيٌّ حركتان.
+ *   • والألف (أَلِفْ) لا مدَّ فيها أصلًا: حرفان متحركان وساكن.
+ * و`last` آخرُ حرفٍ في الاسم (ساكن) — عليه تُبنى أحكامُ ما بين الأسماء: ميمٌ في ميم
+ * ← إدغامُ متماثلين بغنّة، ونونٌ في ميم ← إدغامٌ بغنّة، ونونٌ قبل حرف إخفاء ← إخفاء
+ * (عٓسٓقٓ · كٓهيعٓصٓ)، وميمٌ قبل غيرهما ← إظهارٌ شفوي (الٓمٓصٓ · الٓمٓرٓ)، ودالُ «صَادْ» ← قلقلة.
  */
-const FAWATIH_LETTER_HARAKAT: Record<string, [number, number, number]> = {
-  ا: [2.5, 2, 3], // أَلِف
-  ل: [7, 7, 7], // لَام — مد لازم حرفي
-  م: [7, 7, 7], // مِيم — مد لازم حرفي
-  ص: [7, 7, 7], // صَاد
-  س: [7, 7, 7], // سِين
-  ك: [7, 7, 7], // كَاف
-  ق: [7, 7, 7], // قَاف
-  ن: [7, 7, 7], // نُون
-  ر: [2.5, 2, 3], // رَا
-  ه: [2.5, 2, 3], // هَا
-  ي: [2.5, 2, 3], // يَا
-  ط: [2.5, 2, 3], // طَا
-  ح: [2.5, 2, 3], // حَا
-  ع: [4, 2, 6], // عَيۡن — حرف لين: ثلاثة أوجه
+type FatihaKind = 'alif' | 'lazim' | 'ayn' | 'tabee';
+const FATIHA_LETTERS: Record<string, { name: string; kind: FatihaKind; last: string }> = {
+  ا: { name: 'أَلِفْ', kind: 'alif', last: 'ف' },
+  ل: { name: 'لَامْ', kind: 'lazim', last: 'م' },
+  م: { name: 'مِيمْ', kind: 'lazim', last: 'م' },
+  ن: { name: 'نُونْ', kind: 'lazim', last: 'ن' },
+  ق: { name: 'قَافْ', kind: 'lazim', last: 'ف' },
+  ص: { name: 'صَادْ', kind: 'lazim', last: 'د' },
+  س: { name: 'سِينْ', kind: 'lazim', last: 'ن' },
+  ك: { name: 'كَافْ', kind: 'lazim', last: 'ف' },
+  ع: { name: 'عَيْنْ', kind: 'ayn', last: 'ن' },
+  ح: { name: 'حَا', kind: 'tabee', last: '' },
+  ي: { name: 'يَا', kind: 'tabee', last: '' },
+  ط: { name: 'طَا', kind: 'tabee', last: '' },
+  ه: { name: 'هَا', kind: 'tabee', last: '' },
+  ر: { name: 'رَا', kind: 'tabee', last: '' },
 };
+
+/** أسماء أحكام الفواتح (تُستعمل في الشارات والشروح والاختبارات) */
+export const LABEL_LAZIM_HARFI_MUTHAQQAL = 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُثَقَّل';
+export const LABEL_LAZIM_HARFI_MUKHAFFAF = 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُخَفَّف';
+export const LABEL_TABEE_HARFI = 'مَدٌّ طَبِيعِيٌّ حَرْفِيّ';
+export const LABEL_LEEN_LAZIM = 'مَدُّ لِينٍ لَازِم (عَيْن)';
+export const LABEL_IZHAR_YASIN_NUN = 'إظهار نون «يسٓ» و«نٓ»';
+
+/**
+ * مَطٌّ زائد على أعلى الأوجه يُتسامَح فيه في **المدّ اللازم** وحده: قياسُ أزمنة
+ * القرّاء المعتمدين (السديس، الشاطري، الرفاعي، العفاسي، الحصري، عبد الباسط —
+ * نحو ٥٠ ألف كلمة لكلٍّ منهم) يُظهر أنهم يمدّون اللازمَ أطولَ من ستِّ «حركاتِ
+ * مقطع» بسرعتهم نفسها (الٓمٓ عندهم ٥٫٤–٩٫٩ ث)، فلا يُحكم على من حاكاهم بالطول.
+ * أمّا الحدّ الأدنى فيبقى ستَّ حركاتٍ كاملة — فمن قصّر اللازم أُخذ به.
+ * المعامل = ١ + LAZIM_STRETCH × (نصيب اللازم من حركات الكلمة).
+ */
+const LAZIM_STRETCH = 1.2;
 
 type MaddKind =
   | 'tabee'
@@ -657,10 +683,15 @@ export function analyzeWord(
     toks.reduce((a, t) => a + (SHORT.has(t.h) || TANWEE.has(t.h) ? 1 : 0), 0) +
     (n > 0 && !SHORT.has(toks[n - 1].h) && !TANWEE.has(toks[n - 1].h) ? 1 : 0);
 
-  /* ==================== فواتح السور: مد لازم حرفي ==================== */
+  /* ==================== فواتح السور: تُهجَّى بأسماء حروفها ==================== */
+  // لها محلّلٌ مستقلّ: أحكامُ الحروف العامة (لام التعريف، القلقلة، النون والميم
+  // الساكنتان…) تُبنى على أصوات الحروف، والفواتح تُنطق بأسمائها — فكانت «الٓمٓ»
+  // تُوسم «لام قمرية» و«قٓ» قلقلةً كبرى، ويُحسب زمنُها كأنه كلمة من ثلاثة أحرف.
   const isFatiha =
-    FAWATIH.has(stripped) && toks.length > 0 && toks.every((t) => !SHORT.has(t.h) && !TANWEE.has(t.h));
-  if (isFatiha) pushMadd('lazim', 'مَدٌّ لَازِمٌ حَرْفِيّ');
+    FAWATIH.has(stripped) &&
+    toks.length > 0 &&
+    toks.every((t) => !SHORT.has(t.h) && !TANWEE.has(t.h) && !!FATIHA_LETTERS[t.ch]);
+  if (isFatiha) return analyzeFatihaWord(word, toks, nextWord, riwayah, tempo, atWaqf, syllables);
 
   /* ==================== المدود (نقاط المد داخل الكلمة) ==================== */
   const nextHamza = startsWithHamza(nextWord);
@@ -680,7 +711,6 @@ export function analyzeWord(
     const nextIsSilentAlef = trailingSilentAlef && i + 1 === n - 1;
     const same = !!toks[i].kh; // الألف الخنجرية: المدّ على المحرف نفسه (ٱلرَّحۡمَـٰنِ)
 
-    if (isFatiha) continue; // فواتح السور: يكفي اللازم الحرفي (وزمنُه من أسماء الحروف)
     if (next && next.sh) {
       // لازم كلمي مُثقَّل: سكون أصلي مع شدة بعد المد (ٱلضَّاۤلِّينَ، ٱلۡحَاۤقَّةُ)
       pushMadd('lazim', 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُثَقَّل', i, same);
@@ -731,7 +761,7 @@ export function analyzeWord(
   /* ==================== لين / عارض للسكون / العِوَض (أحكام الوقف) ==================== */
   // مد اللين: و/ي ساكنة مفتوح ما قبلها يليها حرف واحد يُسكَّن عند الوقف (خَوۡفٌ، بَيۡتٌ).
   // المفتوح لا يكون ياءً/واوًا (يَوۡمَ: لا لين — التحفة: «ولا لين في يوم لما تقدَّم»)
-  if (n >= 3 && lastTok && !isFatiha) {
+  if (n >= 3 && lastTok) {
     const leen = toks[n - 2];
     const before = toks[n - 3];
     if (
@@ -1049,6 +1079,9 @@ export function analyzeWord(
   let hMid = 0;
   let hLo = 0;
   let hHi = 0;
+  /** حركات المدّ اللازم، والمدود الطويلة الأخرى (متصل/منفصل/صلة كبرى) */
+  let hLazim = 0;
+  let hLong = 0;
   const EMPTY_TOK: Tok = { ch: '', h: '', sh: false, hz: false, hm: false, qb: false, sl: false, kh: false };
   let t0: Tok = toks[0] ?? EMPTY_TOK;
   const addH = (c: number, lo = c, hi = c, why?: string) => {
@@ -1058,94 +1091,88 @@ export function analyzeWord(
     if (TRACE && c > 0) TRACE.push({ tok: tokLabel(t0), h: c, lo, hi, why: why ?? '' });
   };
 
-  if (isFatiha) {
-    // فواتح السور تُهجَّى بأسمائها (الٓمٓ ← ألفٌ لامٌ ميم)، فزمنُها من أسماء حروفها
-    for (const t of toks) {
-      t0 = t;
-      const f = FAWATIH_LETTER_HARAKAT[t.ch] ?? [2, 2, 2];
-      addH(f[0], f[1], f[2], `اسم الحرف «${FAWATIH_NAMES[t.ch] ?? t.ch}»`);
+  for (let i = 0; i < n; i++) {
+    const t = toks[i];
+    t0 = t;
+    const sp = spotAt.get(i);
+    const gh = ghunnaSpots.has(i);
+    const isLast = i === n - 1;
+    /** حركةُ آخر كلمةٍ في الوقف تُسكَّن، فلا تُحسب حركةً كاملة */
+    const tail = atWaqf && isLast ? WAQF_TAIL_HARAKAT : 1;
+
+    // الألف الفارقة بعد واو الجماعة (ءَامَنُوا۟): لا تُنطق
+    if (isSilentFinalAlef(t, toks[i - 1])) continue;
+
+    // ألفُ التنوين المفتوح (كِتَـٰبࣰا · قُرۡءَـٰنࣰا): رسمٌ لحملة الفتحتين لا مقطعَ له،
+    // فلا يُحسب ساكنًا — إلا وقفًا إذ تصير مدَّ العِوَض (وموضعُها محسوبٌ هناك).
+    if (
+      isLast &&
+      iwadAt !== i &&
+      !sp &&
+      !t.sh &&
+      !t.kh &&
+      t.h === '' &&
+      (t.ch === 'ا' || t.ch === 'ى') &&
+      toks[i - 1]?.h === TANF
+    ) continue;
+
+    // لامُ التعريف الشمسية: تسقط في الحرف المشدَّد بعدها (ٱلرَّحۡمَـٰنِ ← أرۡرَّحۡمَـٰن)
+    if (isAbsorbedLam(i)) continue;
+
+    // همزة الوصل: تُنطق مبتدأً بها (حركة) وتسقط وصلًا (صفر).
+    // وإن لحقها حرفٌ سابق (وَٱللَّهُ · بِٱلۡحَقِّ · لِّلَّهِ) فهي لا تُنطق البتة،
+    // فلا تُحسب ساكنًا — وهذا كان يزيد ٢٧١٠ كلمات نصفَ حركة.
+    if (t.ch === '\u0671' || (i === 0 && t.ch === 'ا' && isSukun(t))) {
+      if (i === 0 && atStart) addH(WASL_HARAKAT, WASL_HARAKAT, WASL_HARAKAT, 'همزة وصل تُنطق مبتدأً بها');
+      continue;
     }
-  } else {
-    for (let i = 0; i < n; i++) {
-      const t = toks[i];
-      t0 = t;
-      const sp = spotAt.get(i);
-      const gh = ghunnaSpots.has(i);
-      const isLast = i === n - 1;
-      /** حركةُ آخر كلمةٍ في الوقف تُسكَّن، فلا تُحسب حركةً كاملة */
-      const tail = atWaqf && isLast ? WAQF_TAIL_HARAKAT : 1;
 
-      // الألف الفارقة بعد واو الجماعة (ءَامَنُوا۟): لا تُنطق
-      if (isSilentFinalAlef(t, toks[i - 1])) continue;
-
-      // ألفُ التنوين المفتوح (كِتَـٰبࣰا · قُرۡءَـٰنࣰا): رسمٌ لحملة الفتحتين لا مقطعَ له،
-      // فلا يُحسب ساكنًا — إلا وقفًا إذ تصير مدَّ العِوَض (وموضعُها محسوبٌ هناك).
-      if (
-        isLast &&
-        iwadAt !== i &&
-        !sp &&
-        !t.sh &&
-        !t.kh &&
-        t.h === '' &&
-        (t.ch === 'ا' || t.ch === 'ى') &&
-        toks[i - 1]?.h === TANF
-      ) continue;
-
-      // لامُ التعريف الشمسية: تسقط في الحرف المشدَّد بعدها (ٱلرَّحۡمَـٰنِ ← أرۡرَّحۡمَـٰن)
-      if (isAbsorbedLam(i)) continue;
-
-      // همزة الوصل: تُنطق مبتدأً بها (حركة) وتسقط وصلًا (صفر).
-      // وإن لحقها حرفٌ سابق (وَٱللَّهُ · بِٱلۡحَقِّ · لِّلَّهِ) فهي لا تُنطق البتة،
-      // فلا تُحسب ساكنًا — وهذا كان يزيد ٢٧١٠ كلمات نصفَ حركة.
-      if (t.ch === '\u0671' || (i === 0 && t.ch === 'ا' && isSukun(t))) {
-        if (i === 0 && atStart) addH(WASL_HARAKAT, WASL_HARAKAT, WASL_HARAKAT, 'همزة وصل تُنطق مبتدأً بها');
-        continue;
-      }
-
-      if (sp) {
-        // صلةُ الهاء الصغرى وصليةٌ: تسقط عند الوقف (فللقارئ أن يقصر الهاء)
-        const f =
-          sp.kind === 'silaSughra' && atWaqf ? [1, 1, 2] : (faces[sp.kind] ?? [2, 2, 2]);
-        if (sp.mode === 'segment') {
-          // حرفُ اللين عند الوقف: أوجهه زمنُ الحرف نفسه
-          addH(f[0], f[1], f[2], `مَدُّ اللين عند الوقف (${f[0]} حركات)`);
-        } else if (sp.sameToken) {
-          // الألف الخنجرية: المقطع كلُّه مدّ (حركتُه الأولى حركةُ حرفه نفسه)
-          addH(f[0], f[1], f[2], `${MADD_NAMES[sp.kind] ?? sp.kind} بالألف الخنجرية (${f[0]} حركات)`);
-          if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة على حرف المدّ');
-        } else {
-          // حرف مدٍّ مستقلّ أو صلةٌ مقدَّرة: حركةُ ما قبله أولى حركات المدّ،
-          // فلا يُزاد إلا ما فوقها (وهذا هو ميزان «قَا = قَ قَ»)
-          const e0 = f[0] - 1;
-          const eLo = Math.max(0, f[1] - 1);
-          const eHi = Math.max(0, f[2] - 1);
-          if (sp.virtual) addH(tail, tail, tail, 'هاء الضمير مقطعٌ متحرك'); // هاءُ الضمير نفسها مقطعٌ قبل الصلة
-          addH(e0, eLo, eHi, `${MADD_NAMES[sp.kind] ?? sp.kind}: ${f[0]} حركات منها حركةُ ما قبله`);
-          if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة');
-        }
-        continue;
-      }
-
-      if (gh) {
-        // الحرف المغنَّن يشغل مقدار الغنّة (حركتان) بدل زمن سكونه،
-        // فإن كان مشدَّدًا أو منوَّنًا فحركتُه مقطعٌ مستقلّ بعدها
-        addH(GHUNNA_HARAKAT, GHUNNA_HARAKAT, GHUNNA_HARAKAT, 'غُنّة حركتان (تحلّ محلّ زمن السكون)');
-        if (SHORT.has(t.h) || TANWEE.has(t.h)) addH(tail, tail, tail, 'حركة الحرف المغنَّن');
-        else if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة = ساكن + متحرك');
-        continue;
-      }
-
-      if (SHORT.has(t.h)) {
-        addH(tail, tail, tail, atWaqf && isLast ? 'حركة آخر الكلمة سُكِّنت وقفًا (بقية مقطع)' : 'حرف متحرك = حركة');
-        if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة = ساكن + متحرك'); // الشدّة = ساكن + متحرك
-      } else if (TANWEE.has(t.h)) {
-        addH(tail, tail, tail, atWaqf && isLast ? 'تنوين وقفًا: حركة مُبدَلة أو مُسكَّنة' : 'حرف منوَّن = حركة');
-        // غُنّة التنوين الخفيفة عند الإظهار — وتسقط وقفًا (أو تُعوَّض ألفًا في مدّ العِوَض)
-        if (!(atWaqf && isLast) && iwadAt !== i + 1)
-          addH(TANWEEN_NASAL_HARAKAT, TANWEEN_NASAL_HARAKAT, TANWEEN_NASAL_HARAKAT, 'غُنّة التنوين الخفيفة');
+    if (sp) {
+      // صلةُ الهاء الصغرى وصليةٌ: تسقط عند الوقف (فللقارئ أن يقصر الهاء)
+      const f =
+        sp.kind === 'silaSughra' && atWaqf ? [1, 1, 2] : (faces[sp.kind] ?? [2, 2, 2]);
+      // نصيب المدود الطويلة من زمن الكلمة: منه وزنُها في تقدير سرعة القارئ ومَطُّ اللازم
+      if (sp.kind === 'lazim' || sp.kind === 'lazimAyn') hLazim += f[0];
+      else if (sp.kind === 'muttasil' || sp.kind === 'munfasil' || sp.kind === 'silaKubra') hLong += f[0];
+      if (sp.mode === 'segment') {
+        // حرفُ اللين عند الوقف: أوجهه زمنُ الحرف نفسه
+        addH(f[0], f[1], f[2], `مَدُّ اللين عند الوقف (${f[0]} حركات)`);
+      } else if (sp.sameToken) {
+        // الألف الخنجرية: المقطع كلُّه مدّ (حركتُه الأولى حركةُ حرفه نفسه)
+        addH(f[0], f[1], f[2], `${MADD_NAMES[sp.kind] ?? sp.kind} بالألف الخنجرية (${f[0]} حركات)`);
+        if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة على حرف المدّ');
       } else {
-        addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'حرف ساكن (بعض مقطع)'); // حرفٌ ساكن ليس مدًّا ولا مغنَّنًا
+        // حرف مدٍّ مستقلّ أو صلةٌ مقدَّرة: حركةُ ما قبله أولى حركات المدّ،
+        // فلا يُزاد إلا ما فوقها (وهذا هو ميزان «قَا = قَ قَ»)
+        const e0 = f[0] - 1;
+        const eLo = Math.max(0, f[1] - 1);
+        const eHi = Math.max(0, f[2] - 1);
+        if (sp.virtual) addH(tail, tail, tail, 'هاء الضمير مقطعٌ متحرك'); // هاءُ الضمير نفسها مقطعٌ قبل الصلة
+        addH(e0, eLo, eHi, `${MADD_NAMES[sp.kind] ?? sp.kind}: ${f[0]} حركات منها حركةُ ما قبله`);
+        if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة');
       }
+      continue;
+    }
+
+    if (gh) {
+      // الحرف المغنَّن يشغل مقدار الغنّة (حركتان) بدل زمن سكونه،
+      // فإن كان مشدَّدًا أو منوَّنًا فحركتُه مقطعٌ مستقلّ بعدها
+      addH(GHUNNA_HARAKAT, GHUNNA_HARAKAT, GHUNNA_HARAKAT, 'غُنّة حركتان (تحلّ محلّ زمن السكون)');
+      if (SHORT.has(t.h) || TANWEE.has(t.h)) addH(tail, tail, tail, 'حركة الحرف المغنَّن');
+      else if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة = ساكن + متحرك');
+      continue;
+    }
+
+    if (SHORT.has(t.h)) {
+      addH(tail, tail, tail, atWaqf && isLast ? 'حركة آخر الكلمة سُكِّنت وقفًا (بقية مقطع)' : 'حرف متحرك = حركة');
+      if (t.sh) addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'شدّة = ساكن + متحرك'); // الشدّة = ساكن + متحرك
+    } else if (TANWEE.has(t.h)) {
+      addH(tail, tail, tail, atWaqf && isLast ? 'تنوين وقفًا: حركة مُبدَلة أو مُسكَّنة' : 'حرف منوَّن = حركة');
+      // غُنّة التنوين الخفيفة عند الإظهار — وتسقط وقفًا (أو تُعوَّض ألفًا في مدّ العِوَض)
+      if (!(atWaqf && isLast) && iwadAt !== i + 1)
+        addH(TANWEEN_NASAL_HARAKAT, TANWEEN_NASAL_HARAKAT, TANWEEN_NASAL_HARAKAT, 'غُنّة التنوين الخفيفة');
+    } else {
+      addH(SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, 'حرف ساكن (بعض مقطع)'); // حرفٌ ساكن ليس مدًّا ولا مغنَّنًا
     }
   }
 
@@ -1157,6 +1184,8 @@ export function analyzeWord(
   const minMs = Math.max(floorMs, msOf(hLo));
   const maxMs = Math.max(expectedMs, msOf(hHi));
   const harakat = Math.round(hMid * 100) / 100;
+  const lazimShare = hMid > 0 ? clamp(hLazim / hMid, 0, 1) : 0;
+  const longShare = hMid > 0 ? clamp(hLong / hMid, 0, 1) : 0;
 
   return {
     word,
@@ -1169,9 +1198,229 @@ export function analyzeWord(
     expectedMs,
     minMs,
     maxMs,
+    stretchMs: lazimShare > 0 ? Math.round(maxMs * (1 + LAZIM_STRETCH * lazimShare)) : undefined,
+    rulerWeight: rulerWeightOf(lazimShare, longShare, maxMs / Math.max(1, minMs), atWaqf),
     harakat,
     atWaqf,
   };
+}
+
+/**
+ * وزنُ الكلمة «مسطرةً» لسرعة القارئ (٠..١): سرعة القارئ تُقدَّر من الكلمات التي
+ * لا اختيار فيها ولا مدَّ طويلًا — فالمدّ اللازم والفواتح هي **موضع الامتحان** لا
+ * أداةُ القياس: لو قيست السرعة منها لصار من قصّر «الٓمٓ» كمن قرأها بسرعته فلا يُخطَّأ
+ * (وهو أصل شكوى «الٓمٓ السريعة تُحكم متقنة»). وكذلك ما فيه أوجهٌ واسعة (العارض واللين)
+ * أو وقفٌ يُمطّ فيه الصوت.
+ */
+function rulerWeightOf(lazimShare: number, longShare: number, faceSpan: number, atWaqf: boolean): number {
+  let w = 1 - 1.3 * lazimShare - 0.6 * longShare;
+  if (faceSpan > 1.25) w *= 0.7;
+  if (atWaqf) w *= 0.6;
+  return Math.round(clamp(w, 0.05, 1) * 100) / 100;
+}
+
+/**
+ * محلّل فواتح السور: يُهجّي الكلمة بأسماء حروفها (الٓمٓ ← أَلِفْ لَامْ مِيمْ) ويبني
+ * على الأسماء أحكامَها وأزمنتَها:
+ *   الٓمٓ = أَلِفْ (٢٫٥) + لَا (٦ لازم مثقّل) + مْ مدغمةٌ في ميم «مِيمْ» بغنّة (٢)
+ *          + مِي (٦ لازم مخفّف) + مْ ساكنة (٠٫٥) = ١٧ حركة.
+ * والشارات مرتّبة بالأهمية: المدود اللازمة أولًا، ثم أحكام ما بين الأسماء، ثم
+ * الطبيعي الحرفي والغنن والقلقلة والتفخيم.
+ */
+function analyzeFatihaWord(
+  word: string,
+  toks: Tok[],
+  nextWord: string,
+  riwayah: Riwayah,
+  tempo: Tempo,
+  atWaqf: boolean,
+  syllables: number,
+): WordTajweed {
+  const faces = MADD_FACES[riwayah];
+  const letters = toks.map((t) => FATIHA_LETTERS[t.ch]).filter(Boolean);
+  const nextToks = tokenize(nextWord);
+  // أول حرفٍ منطوق بعد الكلمة (وصلًا داخل الآية)؛ ولا حكمَ عند الوقف أو قبل همزة وصل
+  const afterWord = atWaqf || !nextToks.length || nextToks[0].ch === '\u0671' ? '' : ruleLetterOfNext(nextWord);
+
+  const lazimBadges: RuleBadge[] = [];
+  const joinBadges: RuleBadge[] = [];
+  const tabeeBadges: RuleBadge[] = [];
+  const ghunnaBadges: RuleBadge[] = [];
+  const otherBadges: RuleBadge[] = [];
+  const who: Record<string, string[]> = {};
+  const noteFor = (label: string, detail: string) => {
+    (who[label] ??= []).push(detail);
+  };
+
+  let hMid = 0;
+  let hLo = 0;
+  let hHi = 0;
+  let hLazim = 0;
+  let qalqalaMs = 0;
+  const add = (tok: string, c: number, lo: number, hi: number, why: string) => {
+    hMid += c;
+    hLo += lo;
+    hHi += hi;
+    if (TRACE && c > 0) TRACE.push({ tok, h: c, lo, hi, why });
+  };
+
+  letters.forEach((L, k) => {
+    const isLastLetter = k === letters.length - 1;
+    const nx = isLastLetter ? afterWord : letters[k + 1] === FATIHA_LETTERS['ا'] ? 'ء' : toks[k + 1].ch;
+    const join = L.last ? fatihaJoin(L.last, nx, isLastLetter && atWaqf, riwayah) : { merged: false };
+
+    if (L.kind === 'alif') {
+      add(L.name, 2.5, 2.5, 2.5, '«أَلِفْ» تُنطق حرفين متحركين وساكنًا — لا مدَّ فيها');
+    } else if (L.kind === 'tabee') {
+      add(L.name, 2, 2, 2, `«${L.name}»: مدٌّ طبيعيٌّ حرفي — حركتان`);
+      noteFor(LABEL_TABEE_HARFI, `«${L.name}»`);
+    } else if (L.kind === 'lazim') {
+      const label = join.merged ? LABEL_LAZIM_HARFI_MUTHAQQAL : LABEL_LAZIM_HARFI_MUKHAFFAF;
+      add(
+        L.name,
+        6,
+        6,
+        6,
+        `«${L.name}»: ${join.merged ? 'مدٌّ لازمٌ حرفيٌّ مثقَّل (أُدغم آخرُه فيما بعده)' : 'مدٌّ لازمٌ حرفيٌّ مخفَّف'} — ستّ حركات منها حركةُ الحرف`,
+      );
+      hLazim += 6;
+      noteFor(label, `«${L.name}»`);
+    } else {
+      const f = faces.lazimAyn;
+      add(L.name, f[0], f[1], f[2], `«${L.name}»: مدُّ لينٍ لازم — التوسّط ${f[1]} أو الإشباع ${f[2]} (والإشباع مقدَّم)`);
+      hLazim += f[0];
+      noteFor(LABEL_LEEN_LAZIM, `«${L.name}»`);
+    }
+
+    // آخرُ الاسم الساكن: غنّةٌ حركتان إن أُدغم أو أُخفي، وإلا فبعضُ مقطع
+    if (L.last && L.kind !== 'alif') {
+      if (join.ghunna) add(L.name, GHUNNA_HARAKAT, GHUNNA_HARAKAT, GHUNNA_HARAKAT, `${join.ghunna} في آخر «${L.name}» — حركتان`);
+      else add(L.name, SUKUN_HARAKAT, SUKUN_HARAKAT, SUKUN_HARAKAT, `آخر «${L.name}» ساكن (بعض مقطع)`);
+    }
+    if (join.badge) {
+      if (!joinBadges.some((b) => b.label === join.badge!.label)) joinBadges.push(join.badge);
+      noteFor(join.badge.label, `«${L.name}»${nx ? ` مع ${isLastLetter ? 'الكلمة بعدها' : `«${FATIHA_LETTERS[toks[k + 1].ch]?.name ?? nx}»`}` : ''}`);
+    }
+    if (join.ghunna && !ghunnaBadges.some((b) => b.label === join.ghunna)) {
+      ghunnaBadges.push({ label: join.ghunna, tone: 'mint', note: GHUNNA_NOTES[join.ghunna] ?? GHUNNA_NOTE });
+    }
+    if (join.qalqala) {
+      qalqalaMs += QALQALA_MS;
+      if (!otherBadges.some((b) => b.label === join.qalqala!.label)) otherBadges.push(join.qalqala);
+    }
+    if ((L.kind === 'lazim' || L.kind === 'tabee') && ISTI_LA.has(toks[k].ch) && !otherBadges.some((b) => b.label === 'حرف استعلاء (تفخيم)')) {
+      otherBadges.push({ label: 'حرف استعلاء (تفخيم)', tone: 'slate', note: NOTE_ISTILA });
+    }
+  });
+
+  // شاراتُ المدود بأسماء حروفها في هذه الكلمة (الشرح يُسمّي الحرف: «لَامْ» مثقَّل و«مِيمْ» مخفَّف)
+  const maddBadge = (label: string): RuleBadge => ({
+    label,
+    tone: 'gold',
+    note: `${MADD_NOTES[label] ?? ''}${who[label]?.length ? ` — وهو هنا في ${who[label].join(' و')}.` : ''}`,
+  });
+  for (const label of [LABEL_LAZIM_HARFI_MUTHAQQAL, LABEL_LAZIM_HARFI_MUKHAFFAF, LABEL_LEEN_LAZIM]) {
+    if (who[label]) lazimBadges.push(maddBadge(label));
+  }
+  if (who[LABEL_TABEE_HARFI]) tabeeBadges.push(maddBadge(LABEL_TABEE_HARFI));
+  for (const b of joinBadges) {
+    if (who[b.label]?.length) b.note = `${b.note ?? ''} — وهو هنا في ${who[b.label].join(' و')}.`;
+  }
+
+  const rules = [...lazimBadges, ...joinBadges, ...tabeeBadges, ...ghunnaBadges, ...otherBadges];
+  const maddRules = [...lazimBadges, ...tabeeBadges];
+
+  const scale = TEMPO_SCALE[tempo] ?? 1;
+  const msOf = (h: number) => Math.round((WORD_FIXED_MS + Math.max(1, h) * HARAKA_MS + qalqalaMs) * scale);
+  const floorMs = Math.round(MIN_WORD_MS * scale);
+  const expectedMs = Math.max(floorMs, msOf(hMid));
+  const minMs = Math.max(floorMs, msOf(hLo));
+  const maxMs = Math.max(expectedMs, msOf(hHi));
+  const lazimShare = hMid > 0 ? clamp(hLazim / hMid, 0, 1) : 0;
+
+  return {
+    word,
+    syllables,
+    isMadd: maddRules.length > 0,
+    maddType: maddRules[0]?.label ?? null,
+    isGhunna: ghunnaBadges.length > 0,
+    ghunnaType: ghunnaBadges[0]?.label ?? null,
+    rules,
+    expectedMs,
+    minMs,
+    maxMs,
+    stretchMs: lazimShare > 0 ? Math.round(maxMs * (1 + LAZIM_STRETCH * lazimShare)) : undefined,
+    rulerWeight: rulerWeightOf(lazimShare, 0, maxMs / Math.max(1, minMs), atWaqf),
+    harakat: Math.round(hMid * 100) / 100,
+    atWaqf,
+    fatiha: true,
+  };
+}
+
+/**
+ * حكمُ الساكن في آخر اسم حرفٍ من الفواتح مع ما يليه (اسمِ الحرف التالي أو الكلمةِ بعده وصلًا).
+ * @param last  آخر حرف في الاسم (م · ن · د · ف)
+ * @param next  أول حرفٍ منطوق بعده ('' عند الوقف)
+ * @param atEnd آخر الكلمة في موضع وقف
+ */
+function fatihaJoin(
+  last: string,
+  next: string,
+  atEnd: boolean,
+  riwayah: Riwayah,
+): { merged: boolean; ghunna?: string; badge?: RuleBadge; qalqala?: RuleBadge } {
+  if (last === 'د') {
+    // دالُ «صَادْ» ساكنةٌ سكونًا أصليًّا: قلقلةٌ صغرى وصلًا، وكبرى وقفًا
+    return {
+      merged: false,
+      qalqala:
+        atEnd || !next
+          ? { label: 'قَلْقَلَة كبرى (عند الوقف)', tone: 'gold', note: NOTE_QALQALA_KUBRA }
+          : { label: 'قَلْقَلَة صغرى', tone: 'gold', note: NOTE_QALQALA_SUGHRA },
+    };
+  }
+  if (!next) return { merged: false };
+  if (last === 'م') {
+    if (next === 'م')
+      return {
+        merged: true,
+        ghunna: 'غُنَّة الإدغام',
+        badge: { label: 'إدغام متماثل صغير', tone: 'mint', note: NOTE_IDGHAM_MITHLAYN },
+      };
+    if (next === 'ب')
+      return {
+        merged: false,
+        ghunna: 'غُنَّة الإخفاء الشفوي',
+        badge: { label: 'إخفاء شفوي', tone: 'mint', note: NOTE_IKHFA_SHAFAWI },
+      };
+    return { merged: false, badge: { label: 'إظهار شفوي', tone: 'mint', note: NOTE_IZHAAR_SHAFAWI } };
+  }
+  if (last === 'ن') {
+    if (next === 'و' || next === 'ي') {
+      // «يسٓ ۝ وَٱلۡقُرۡءَانِ» و«نٓۚ وَٱلۡقَلَمِ»: حفصٌ يُظهر النون (الشاطبية)، وورشٌ يُدغمها
+      if (riwayah === 'warsh')
+        return {
+          merged: true,
+          ghunna: 'غُنَّة الإدغام',
+          badge: { label: 'إدغام بغُنّة', tone: 'mint', note: NOTE_WARSH_YASIN_NUN },
+        };
+      return { merged: false, badge: { label: LABEL_IZHAR_YASIN_NUN, tone: 'mint', note: NOTE_IZHAR_YASIN_NUN } };
+    }
+    if (next === 'م' || next === 'ن')
+      return {
+        merged: true,
+        ghunna: 'غُنَّة الإدغام',
+        badge: { label: 'إدغام بغُنّة', tone: 'mint', note: NOTE_IDGHAM_GHUNNA },
+      };
+    if (IDGHAM_LA_RA.has(next))
+      return { merged: true, badge: { label: 'إدغام بغير غُنّة', tone: 'mint', note: NOTE_IDGHAM_BILA } };
+    if (next === 'ب')
+      return { merged: false, ghunna: 'غُنَّة الإقلاب', badge: { label: 'إقلاب', tone: 'mint', note: NOTE_IQLAB } };
+    if (IKHFA.has(next))
+      return { merged: false, ghunna: 'غُنَّة الإخفاء', badge: { label: 'إخفاء', tone: 'mint', note: NOTE_IKHFA } };
+    if (IZHAAR_HALQI.has(next)) return { merged: false, badge: { label: 'إظهار حلقي', tone: 'mint', note: NOTE_IZHAAR } };
+  }
+  return { merged: false };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1195,7 +1444,7 @@ const MADD_NAMES: Partial<Record<MaddKind, string>> = {
   muttasil: 'مَدّ واجب متصل',
   munfasil: 'مَدّ جائز منفصل',
   lazim: 'مَدّ لازم كلمي مثقّل',
-  lazimAyn: 'مدّ عين (كهيعص)',
+  lazimAyn: LABEL_LEEN_LAZIM,
   silaSughra: 'صلة صغرى',
   silaKubra: 'صلة كبرى',
   leen: 'مدّ لين',
@@ -1203,10 +1452,6 @@ const MADD_NAMES: Partial<Record<MaddKind, string>> = {
   iwad: 'مدّ عوض',
 };
 
-const FAWATIH_NAMES: Record<string, string> = {
-  ا: 'أَلِف', ل: 'لاَم', م: 'مِيم', ص: 'صَاد', س: 'سِين', ك: 'كَاف', ع: 'عَين',
-  ط: 'طَا', ح: 'حَا', ي: 'يَا', ه: 'هَا', ر: 'رَا', ن: 'نُون', ق: 'قَاف',
-};
 
 /** أثرُ عدٍّ تامّ: خطواتُه، وحصيلةُ حركاته، والأزمنةُ المبنيةُ عليها */
 export interface TimingTrace {
@@ -1272,14 +1517,26 @@ export function tauTolerance(tau: number): number {
 export interface TimingWindow {
   minMs: number;
   maxMs: number;
+  /** مَطُّ المدّ اللازم المتسامَح فيه فوق أعلى الأوجه (انظر WordTajweed.stretchMs) */
+  stretchMs?: number;
 }
 
 /** نافذة الحكم: المدى المقبول بين أدنى الأوجه الجائزة وأعلاها بعد سماح τ */
 export function acceptWindow(expectedMs: number, tau: number, win?: TimingWindow | null): [number, number] {
   const tol = tauTolerance(tau);
   const lo = Math.max(60, (win?.minMs ?? expectedMs) * (1 - tol));
-  const hi = Math.max(lo, (win?.maxMs ?? expectedMs) * (1 + tol));
+  const top = Math.max(win?.maxMs ?? expectedMs, win?.stretchMs ?? 0);
+  const hi = Math.max(lo, top * (1 + tol));
   return [lo, hi];
+}
+
+/** نافذة الأوجه بعدلة سرعةٍ (تُضرب الحدود كلها فيها) */
+export function scaledWindow(t: WordTajweed, scale: number): TimingWindow {
+  return {
+    minMs: Math.max(60, Math.min(t.minMs ?? t.expectedMs, t.expectedMs) * scale),
+    maxMs: Math.max(60, Math.max(t.maxMs ?? t.expectedMs, t.expectedMs) * scale),
+    ...(t.stretchMs ? { stretchMs: Math.max(60, t.stretchMs * scale) } : {}),
+  };
 }
 
 /**
@@ -1397,6 +1654,11 @@ const NOTE_WARSH_IMALA_YA =
 const NOTE_WARSH_IMALA_RA =
   'الألف الواقعة قبل راءٍ مكسورة يُقلّلها ورش قولًا واحدًا (ٱلنَّارِ، ٱلدَّارِ، ٱلْأَبْرَارِ، أَبْصَارِهِمْ)، وفي (ٱلْجَارِ، ٱلْجَبَّارِينَ) له الفتح والتقليل مع تغليظ اللام.';
 
+const NOTE_IZHAR_YASIN_NUN =
+  'نونُ «يسٓ» و«نٓ» إذا وُصلت بالواو بعدها (يسٓ ۝ وَٱلۡقُرۡءَانِ · نٓۚ وَٱلۡقَلَمِ): لحفصٍ الإظهارُ من طريق الشاطبية — استثناءً من إدغام النون الساكنة في الواو — فتُنطق النون ظاهرةً بلا غنّةٍ زائدة.';
+const NOTE_WARSH_YASIN_NUN =
+  'نونُ «يسٓ» و«نٓ» عند وصلها بالواو بعدها: يُدغمها ورشٌ بغنّة في «يسٓ ۝ وَٱلۡقُرۡءَانِ»، وله في «نٓۚ وَٱلۡقَلَمِ» الوجهان (الإدغام والإظهار) — وحفصٌ يُظهر فيهما.';
+
 /** أحكام لا تظهر إلا في رواية ورش (تُوسَم في الواجهة «خاصة بورش») */
 export const WARSH_ONLY_RULES = [
   'نَقْل حركة الهمزة',
@@ -1430,7 +1692,14 @@ const MADD_NOTES: Record<string, string> = {
   'مَدُّ الْبَدَل': 'جاء حرف المد بعد همزة (ءَامَنُواْ، إِيمَٰنࣱ)؛ يُقصر عند حفص حركتين.',
   'مَدٌّ لَازِمٌ كَلِمِيٌّ مُثَقَّل': 'بعد حرف المد سكون أصلي مع شِدَّة في كلمة (ٱلضَّاۤلِّينَ، ٱلۡحَاۤقَّةُ)؛ يُمدّ ست حركات لزومًا.',
   'مَدٌّ لَازِمٌ كَلِمِيٌّ مُخَفَّف': 'بعد حرف المد سكون أصلي غير مشدَّد في كلمة (ءَالۡـَٰنَ)؛ يُمدّ ست حركات لزومًا.',
-  'مَدٌّ لَازِمٌ حَرْفِيّ': 'في الحروف المقطَّعة فواتح السور: يُمدّ ما كان من (نقصِ عسلك) وميمًا ستَّ حركات (الٓمٓ، يسٓ).',
+  [LABEL_LAZIM_HARFI_MUTHAQQAL]:
+    'حرفٌ من فواتح السور يُهجّى باسمه، وهجاؤه ثلاثةُ أحرفٍ أوسطُها حرفُ مدّ، وأُدغم آخرُه فيما بعده (لَامْ مِيمْ ← لَامِّيمْ في الٓمٓ، وسِينْ مِيمْ في طسٓمٓ)؛ يُمدّ ستّ حركات لزومًا، ويُنطق الحرف المدغم مشدَّدًا بغنّة.',
+  [LABEL_LAZIM_HARFI_MUKHAFFAF]:
+    'حرفٌ من فواتح السور يُهجّى باسمه، وهجاؤه ثلاثةُ أحرفٍ أوسطُها حرفُ مدّ، ولم يُدغم آخرُه فيما بعده (مِيمْ آخرَ الٓمٓ، قٓ، نٓ، صٓ)؛ يُمدّ ستّ حركات لزومًا ثم يُسكَّن آخرُه.',
+  [LABEL_LEEN_LAZIM]:
+    'عينُ «كٓهيعٓصٓ» و«عٓسٓقٓ» تُهجّى «عَيْنْ»: ياءٌ لينة بعدها سكونٌ أصلي؛ فيها التوسّط (٤ حركات) والإشباع (٦) — «وعينُ ذو وجهين والطولُ أخصّ».',
+  [LABEL_TABEE_HARFI]:
+    'حروف «حَيٌّ طَهُرَ» في فواتح السور (حَا، يَا، طَا، هَا، رَا) هجاؤها حرفان ثانيهما حرفُ مدّ، فتُمدّ حركتين فقط — ولا يُزاد عليهما.',
   'مَدُّ الصِّلَة الصُّغْرَى': 'هاء ضمير بين متحركين لم يلها همز؛ تُمدّ حركتين وصلًا (بِهِۦ مِنَ) — وتعلِّمها المصحف بـ ۥ واوًا للضمة و ۦ ياءً للكسرة.',
   'مَدُّ الصِّلَة الْكُبْرَى': 'هاء ضمير جاء بعدها همز قطع (عَهۡدَهُۥۤ أَمۡ)؛ تُمدّ أربع أو خمس حركات.',
   'مَدُّ اللِّين (عند الوقف)': 'واو أو ياء ساكنة قبلها فتحة إذا وقف عليها (خَوۡفٍ، بَيۡتٍ)؛ يجوز قصره وتوسطه وإشباعه.',
@@ -1456,6 +1725,7 @@ export const RULE_GLOSSARY: Record<string, string> = {
   'إخفاء شفوي': NOTE_IKHFA_SHAFAWI,
   'إدغام متماثل صغير': NOTE_IDGHAM_MITHLAYN,
   'إظهار شفوي': NOTE_IZHAAR_SHAFAWI,
+  [LABEL_IZHAR_YASIN_NUN]: NOTE_IZHAR_YASIN_NUN,
   'إظهار داخل الكلمة': NOTE_IZHAAR_INNER,
   'إخفاء داخل الكلمة': NOTE_IKHFA_INNER,
   'قَلْقَلَة كبرى (عند الوقف)': NOTE_QALQALA_KUBRA,

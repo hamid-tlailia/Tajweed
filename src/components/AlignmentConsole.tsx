@@ -276,7 +276,9 @@ export default function AlignmentConsole() {
     ? result.passed
       ? 'اجتزت الآية بمطابقة القارئ المعتمد'
       : textOk
-        ? 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
+        ? !result.reciter.passed
+          ? 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
+          : 'لم تُجتز — درجتك الذاتية دون الحدّ'
         : textCheck === 'unverified'
           ? 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
           : textFailTitle
@@ -329,7 +331,14 @@ export default function AlignmentConsole() {
               </p>
             ) : null}
           </div>
-          <Badge tone={result.passed ? 'mint' : 'warn'}>{TEMPO_META[result.tempo]?.label ?? 'ترتيل'}</Badge>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <Badge tone={result.passed ? 'mint' : 'warn'}>{TEMPO_META[result.tempo]?.label ?? 'ترتيل'}</Badge>
+            {result.reference ? (
+              <span className="text-[9.5px] text-slate-400" title="القارئ الذي قِيست إليه سرعة تلاوتك (مسطرة السرعة)">
+                المرجع: {result.reference.name}
+              </span>
+            ) : null}
+          </div>
         </div>
         {result.tips.length ? (
           <ul className="mt-3 space-y-1.5">
@@ -367,7 +376,7 @@ export default function AlignmentConsole() {
                 ? `شرط الاجتياز: أن يتبيّن نصّ الآية بالسماع الذكي، ثم درجة ${PASS_SCORE}٪ فأكثر.`
                 : `شرط الاجتياز أولًا: أن يكون المقروء هو الآية المختارة (تطابق النصّ ${Math.round(100 * TEXT_GATE_OK)}٪ فأكثر) — ثم الدرجة ${PASS_SCORE}٪.`
               : result.reciter
-                ? `حدّ الاجتياز مطابقة القارئ المعتمد ${PASS_SCORE}٪ (درجتك الذاتية ${result.overallScore}٪). حاذِ أزمنة كلماتك بأزمنته وأعد التلاوة.`
+                ? `حدّ الاجتياز: مطابقة القارئ المعتمد ${PASS_SCORE}٪ (مطابقتك ${result.reciter.matchPct}٪) ودرجتك الذاتية ${PASS_SCORE}٪ (درجتك ${result.overallScore}٪). حاذِ أزمنة كلماتك بأزمنته وأتمم المدود بمقاديرها، ثم أعد التلاوة.`
                 : `حدّ الاجتياز ${PASS_SCORE}٪. أعد التلاوة بعد إصلاح الملاحظات أعلاه.`}
           </p>
         ) : null}
@@ -383,8 +392,10 @@ export default function AlignmentConsole() {
             <span className="font-brand text-2xl font-bold leading-none text-gold-300">{result.reciter.matchPct}%</span>
           </div>
           <p className="mt-1 text-[10.5px] leading-relaxed text-slate-400">
-            قورنت أزمنة كلماتك بأزمنة القارئ بعدلة سرعتك (أنت ≈{result.reciter.scale.toFixed(2)}× من سرعته) — فمن حافظ
-            على نسقه في المدود والغنن والتمطيط طابقه.
+            {result.reciter.anchored
+              ? 'الآية قصيرةٌ أو كلماتها مدودٌ لازمة، فقُورنت أزمنتُك بأزمنة القارئ كما هي تقريبًا (لا تُستخرج سرعتك من الكلمة المقيسة نفسها)'
+              : `قورنت أزمنة كلماتك بأزمنة القارئ بعدلة سرعةٍ محدودة حول سرعته (أنت ≈${(result.reciter.rawScale ?? result.reciter.scale).toFixed(2)}× من زمنه)`}{' '}
+            — فمن حافظ على نسقه في المدود والغنن والتمطيط طابقه، وتُراعى الأوجه الجائزة.
           </p>
           {result.reciter.note ? (
             <p className="mt-1.5 rounded-lg border border-warn-500/40 bg-warn-500/10 px-2.5 py-1.5 text-[10.5px] leading-relaxed text-warn-300">
@@ -597,6 +608,15 @@ export default function AlignmentConsole() {
                 </td>
                 <td className="px-3 py-2">
                   <StatusBadge status={w.status} />
+                  {(() => {
+                    const rc = result.reciter?.perWord[i];
+                    if (!rc || !rc.dir || rc.dir === 'ok') return null;
+                    return (
+                      <span className="mt-1 block whitespace-nowrap text-[9.5px] text-warn-300" title="المقارنة بأزمنة القارئ المعتمد">
+                        {rc.dir === 'short' ? 'القارئ: أقصر منه ↓' : rc.dir === 'long' ? 'القارئ: أطول منه ↑' : 'القارئ: لم تُسمع'}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td className="px-3 py-2">
                   {openRow === i ? (
@@ -690,8 +710,9 @@ export default function AlignmentConsole() {
           ))}
           <p className="rounded-lg border border-line/60 bg-ink-950/40 p-2.5 text-[10px] leading-relaxed text-slate-500">
             الأحكام ومقاديرُها بالحركات منقولاتٌ من هذه المتون وشروحها ومواضعُها من ضبط المصحف؛ وأما تحويلُ الحركة إلى
-            أجزاء الثانية ({HARAKA_MS} م.ث في الترتيل) فمعايرةٌ هندسية لتلاوات المرتّلِين، لا نصٌّ فيها — وقد
-            يقرأ الإمامُ أبطأ أو أسرع، فيُقاس القارئ بعدلة سرعته هو.
+            أجزاء الثانية ({HARAKA_MS} م.ث في الترتيل) فمعايرةٌ هندسية لتلاوات المرتّلِين، لا نصٌّ فيها — ولذلك
+            يُقاس كل تحليلٍ إلى سرعة قارئٍ معتمدٍ للمرتبة (مقيسةً من تلاواته)، ولا تبعد عدلةُ سرعة القارئ عنها إلا في
+            مدًى معقول؛ والآيةُ القصيرة تُقاس إليها لا إلى نفسها.
           </p>
         </div>
       </details>

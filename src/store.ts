@@ -5,7 +5,8 @@ import { engineAlign, engineLoadModel } from '@/lib/engine';
 import { compareWithReciter } from '@/lib/compare';
 import { decodeBlobTo16k } from '@/lib/audio';
 import { fetchSurah, fetchSurahs, buildTarget } from '@/lib/quran';
-import { RECITERS, fetchReciterBlob } from '@/lib/reciter';
+import { fetchReciterBlob, resolveReciter, stylesFor } from '@/lib/reciter';
+import type { RecitationStyle, ReciterProfile } from '@/lib/reciter';
 import type {
   AlignmentResult,
   AppTab,
@@ -25,9 +26,9 @@ const surahCache = new Map<number, SurahData>();
 const fileProgress = new Map<string, number>();
 const PROGRESS_KEY = 'tahqiq-progress-v1';
 const SETTINGS_KEY = 'tahqiq-settings-v1';
-// v2: أُعيد بناء محرّك قياس أزمنة الكلمات، فأزمنةُ القارئ المرجعي المخزَّنة
-// بالإصدار الأول مقاسة بقياسٍ مُنحرف — تُهمَل لئلا يُحاكَم القارئ إليها.
-const REF_KEY = 'tahqiq-ref-v2';
+// v3: صار المرجعُ مفتاحُه (السورة:الآية:القارئ) — فلكل مرتبةٍ ونوع تلاوةٍ قارئُها — وأُصلحت
+// عتبة الصوت في المقاطع المقصوصة (كانت تُفسد قياس مقاطع القرّاء القصيرة): تُهمَل مراجع v2.
+const REF_KEY = 'tahqiq-ref-v3';
 
 function loadProgress(): Record<string, Record<number, AyahRecord>> {
   if (typeof window === 'undefined') return {};
@@ -50,7 +51,16 @@ function saveProgress(p: Record<string, Record<number, AyahRecord>>) {
 type PersistedSettings = Partial<
   Pick<
     TahqiqStore,
-    'tempo' | 'tau' | 'riwayah' | 'modelSize' | 'alertOn' | 'theme' | 'useReciterGate' | 'instantEval'
+    | 'tempo'
+    | 'tau'
+    | 'riwayah'
+    | 'modelSize'
+    | 'alertOn'
+    | 'theme'
+    | 'useReciterGate'
+    | 'instantEval'
+    | 'referenceChoice'
+    | 'recitationStyle'
   >
 >;
 
@@ -73,6 +83,8 @@ function saveSettings(s: {
   theme: ThemeMode;
   useReciterGate: boolean;
   instantEval: boolean;
+  referenceChoice: string;
+  recitationStyle: RecitationStyle;
 }) {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
@@ -114,6 +126,37 @@ interface RefEvalState {
   key: string; // مفتاح المرجع الجاري/الأخير
   stage: string;
   error: string | null;
+  /** بدأ تلقائيًّا (لا بضغط المستخدم) — فلا يُعرض خطؤه إلا تنبيهًا خفيفًا */
+  auto?: boolean;
+}
+
+/** مفتاح مرجع القارئ لآية: (السورة:الآية:القارئ) */
+export function refKey(surahId: number, ayah: number, reciterId: string): string {
+  return `${surahId}:${ayah}:${reciterId}`;
+}
+
+/**
+ * ضمُّ التحكيم بالقارئ المعتمد إلى نتيجة التلاوة: تُقارن كلماتها بأزمنته، وتُحمل
+ * المقارنة في النتيجة. فإن كان «الاجتياز بمطابقة القارئ» مفعّلًا فلا تُجاز الآية إلا
+ * إذا اجتازت **الدرجة الذاتية ومطابقة القارئ معًا** — فلا تُجاز تلاوةٌ خالفت القارئ
+ * بيّنًا وإن حسُنت درجتُها الذاتية (ولا العكس).
+ */
+function withReference(
+  result: AlignmentResult,
+  ref: RefAlignment | undefined,
+  reciter: ReciterProfile,
+  tau: number,
+  tempo: Tempo,
+  useGate: boolean,
+): AlignmentResult {
+  if (!ref || result.demo) return result;
+  const textOk = result.textCheck === 'ok' || result.textCheck === 'demo';
+  const cmp = compareWithReciter(result.words, ref, tau, textOk, ref.label, result.textCheck, {
+    tempo,
+    refPace: reciter.pace,
+  });
+  if (!cmp) return result;
+  return { ...result, reciter: cmp, passed: useGate ? result.passed && cmp.passed && textOk : result.passed };
 }
 
 interface TahqiqStore {
@@ -158,9 +201,28 @@ interface TahqiqStore {
   refEval: RefEvalState;
   refCache: Record<string, RefAlignment>;
   useReciterGate: boolean;
-  evaluateReciter: () => Promise<void>;
+  /**
+   * القارئ المرجعي: 'auto' (بحسب الرواية والمرتبة ونوع التلاوة) أو معرّف قارئٍ بعينه.
+   * ومرجعٌ ما حاضرٌ في كل تحليل وإن لم يختر المستخدم شيخًا.
+   */
+  referenceChoice: string;
+  /** نوع التلاوة المرجعية: مرتَّل / مجوَّد */
+  recitationStyle: RecitationStyle;
+  setReferenceChoice: (id: string) => void;
+  setRecitationStyle: (s: RecitationStyle) => void;
+  /** القارئ المرجعي الفعلي الآن (المختار أو التلقائي) */
+  referenceOf: () => { reciter: ReciterProfile; auto: boolean };
+  /**
+   * تقييم تلاوة القارئ المعتمد للآية الحالية (جلب صوته وقياسه بالمحرّك) — يدويًّا
+   * بالزرّ، أو تلقائيًّا في الخلفية (auto) عند اختيار الآية وبعد كل تسجيل.
+   */
+  evaluateReciter: (opts?: { auto?: boolean; fastOnly?: boolean }) => Promise<void>;
   setUseReciterGate: (b: boolean) => void;
-  refKeyOf: () => string; // مفتاح مرجع الآية/الرواية/المرتبة الحالية
+  refKeyOf: () => string; // مفتاح مرجع الآية والقارئ الحاليَّين
+  /** ضمُّ مرجع القارئ (إن حضر) إلى النتيجة الحالية — يُستدعى متى جهز المرجع بعد النتيجة */
+  applyReference: () => void;
+  /** تهيئة مرجع الآية الحالية تلقائيًّا في الخلفية بعد مهلةٍ يسيرة (إن لم يكن محفوظًا) */
+  schedulePrefetch: (delayMs?: number) => void;
 
   init: () => Promise<void>;
   /** تجهيز السماع الذكي تلقائيًّا إن لم يكن قد جُهِّز (ولا يُعاد بعد فشل) */
@@ -195,7 +257,18 @@ function persistSettings(get: () => TahqiqStore) {
     theme: s.theme,
     useReciterGate: s.useReciterGate,
     instantEval: s.instantEval,
+    referenceChoice: s.referenceChoice,
+    recitationStyle: s.recitationStyle,
   });
+}
+
+/** مؤقّت التهيئة التلقائية لمرجع الآية (يُلغى إن تغيّرت الآية قبل انقضائه) */
+let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** النتيجة بلا تحكيم (حين يتبدّل القارئ المرجعي: لا تبقى مقارنةٌ بقارئٍ لم يعد مرجعًا) */
+function selfOnly(r: AlignmentResult | null): AlignmentResult | null {
+  if (!r || r.selfPassed === undefined || !r.reciter) return r;
+  return { ...r, passed: r.selfPassed, reciter: undefined };
 }
 
 export const useTahqiq = create<TahqiqStore>()((set, get) => ({
@@ -231,6 +304,8 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   refEval: { status: 'idle', key: '', stage: '', error: null },
   refCache: {},
   useReciterGate: true,
+  referenceChoice: 'auto',
+  recitationStyle: 'murattal',
 
   setTheme: (theme) => {
     set({ theme });
@@ -246,6 +321,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   setUseReciterGate: (useReciterGate) => {
     set({ useReciterGate });
     persistSettings(get);
+    get().applyReference();
   },
 
   setAlertOn: (alertOn) => {
@@ -253,34 +329,82 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
     persistSettings(get);
   },
 
-  refKeyOf: () => `${get().selectedSurahId}:${get().selectedAyah}:${get().riwayah}:${get().tempo}`,
+  referenceOf: () => {
+    const { riwayah, tempo, recitationStyle, referenceChoice } = get();
+    return resolveReciter(riwayah, tempo, recitationStyle, referenceChoice);
+  },
 
-  evaluateReciter: async () => {
-    const { scope, surahCache, selectedSurahId, selectedAyah, riwayah, tempo, tau, modelSize, refEval, refCache } =
+  refKeyOf: () => refKey(get().selectedSurahId, get().selectedAyah, get().referenceOf().reciter.id),
+
+  setReferenceChoice: (referenceChoice) => {
+    set({ referenceChoice, refEval: { status: 'idle', key: '', stage: '', error: null }, result: selfOnly(get().result) });
+    persistSettings(get);
+    void get().evaluateReciter({ auto: true });
+  },
+
+  setRecitationStyle: (recitationStyle) => {
+    const ok = stylesFor(get().riwayah).includes(recitationStyle) ? recitationStyle : 'murattal';
+    set({
+      recitationStyle: ok,
+      referenceChoice: 'auto',
+      refEval: { status: 'idle', key: '', stage: '', error: null },
+      result: selfOnly(get().result),
+    });
+    persistSettings(get);
+    void get().evaluateReciter({ auto: true });
+  },
+
+  evaluateReciter: async (opts) => {
+    const auto = !!opts?.auto;
+    const { scope, surahCache, selectedSurahId, selectedAyah, riwayah, tempo, tau, modelSize, refEval, refCache, modelStatus } =
       get();
-    if (refEval.status === 'loading') return;
     const data = surahCache[selectedSurahId];
     if (scope !== 'ayah' || !data) return;
-    const key = `${selectedSurahId}:${selectedAyah}:${riwayah}:${tempo}`;
+    const { reciter } = get().referenceOf();
+    const key = refKey(selectedSurahId, selectedAyah, reciter.id);
+    if (refEval.status === 'loading' && refEval.key === key) return;
+    // التلقائي لا يُعيد ما فشل للآية نفسها (لا إلحاح على شبكةٍ منقطعة)، ولا يعمل بلا اتصال
+    if (auto && refEval.status === 'error' && refEval.key === key) return;
+    if (auto && typeof navigator !== 'undefined' && navigator.onLine === false) return;
 
-    // مرجع محفوظ سابقًا → جاهز فورًا
-    if (refCache[key]) {
-      set({ refEval: { status: 'ready', key, stage: '', error: null } });
+    const cached = refCache[key];
+    // مرجع محفوظ سابقًا → جاهز فورًا. وما قِيس بالصوت وحده (قبل تجهيز السماع الذكي)
+    // يُرقّى إلى القياس الكامل متى جُهِّز — والمستخدم لا يسجّل ولا يُحلَّل له شيء.
+    const busy = get().processing || get().recording;
+    const upgrade = !!cached && cached.quality === 'fast' && modelStatus === 'ready' && !busy && !opts?.fastOnly;
+    if (cached && !upgrade) {
+      set({ refEval: { status: 'ready', key, stage: '', error: null, auto } });
+      get().applyReference();
       return;
     }
+    // التهيئة التلقائية لا تزاحم تسجيلًا جاريًا أو تحليلًا (وتُستأنف بعده من setResult)
+    if (auto && busy) return;
 
-    set({ refEval: { status: 'loading', key, stage: 'جلب صوت القارئ المعتمد…', error: null } });
+    const stage = (t: string) =>
+      set({ refEval: { status: 'loading', key, stage: t, error: null, auto } });
+    stage(`جلب صوت القارئ المعتمد (${reciter.name})…`);
     try {
-      const blob = await fetchReciterBlob(riwayah, selectedSurahId, selectedAyah);
-      set({ refEval: { status: 'loading', key, stage: 'فكّ ترميز الصوت…', error: null } });
+      const blob = await fetchReciterBlob(reciter.id, selectedSurahId, selectedAyah);
+      stage('فكّ ترميز الصوت…');
       const samples = await decodeBlobTo16k(blob);
 
+      // القياس الكامل (بالسماع الذكي) إن كان جاهزًا؛ وإلا فقياس الصوت وحده في الخيط —
+      // فلا يُزاحم تهيئةُ المرجع التلقائية تحليلَ تلاوة المستخدم في العامل.
+      const full = modelStatus === 'ready' && !opts?.fastOnly;
       const target = buildTarget(data, 'ayah', selectedAyah);
       const res = await engineAlign(
         { samples, url: null, demo: false },
-        { tau, modelSize, target, riwayah, tempo },
         {
-          stage: (s) => set({ refEval: { status: 'loading', key, stage: s, error: null } }),
+          tau,
+          modelSize,
+          target,
+          riwayah,
+          tempo,
+          fast: !full,
+          reference: { id: reciter.id, name: reciter.name, pace: reciter.pace },
+        },
+        {
+          stage: (t) => stage(t),
           model: (e) => {
             if (e.status === 'loading') set({ modelStatus: 'loading', modelProgress: e.progress ?? 0 });
             else if (e.status === 'ready') set({ modelStatus: 'ready', modelProgress: 1, modelMessage: null });
@@ -289,27 +413,75 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       );
 
       const ref: RefAlignment = {
-        label: RECITERS[riwayah].name,
+        label: reciter.name,
+        reciterId: reciter.id,
+        quality: full ? 'full' : 'fast',
         durationMs: res.durationMs,
         score: res.overallScore,
         words: res.words.map((w) => ({ startMs: w.startMs, endMs: w.endMs })),
       };
       const next = { ...get().refCache, [key]: ref };
       saveRefs(next);
-      set({ refCache: next, refEval: { status: 'ready', key, stage: '', error: null } });
+      set({ refCache: next, refEval: { status: 'ready', key, stage: '', error: null, auto } });
+      get().applyReference();
     } catch (e: any) {
       set({
         refEval: {
           status: 'error',
           key,
           stage: '',
+          auto,
           error:
             e?.message === 'OFFLINE'
-              ? 'تعذّر جلب صوت القارئ المعتمد — هذه الخطوة تحتاج اتصالًا بالإنترنت (مرة واحدة لكل آية).'
+              ? 'تعذّر جلب صوت القارئ المعتمد — هذه الخطوة تحتاج اتصالًا بالإنترنت (مرة واحدة لكل آية). ويبقى القارئ المرجعي مسطرةً للسرعة في كل تحليل.'
               : (e?.message ?? 'تعذّر تقييم تلاوة القارئ المعتمد — أعد المحاولة.'),
         },
       });
     }
+  },
+
+  schedulePrefetch: (delayMs = 1500) => {
+    if (prefetchTimer) clearTimeout(prefetchTimer);
+    prefetchTimer = setTimeout(() => {
+      prefetchTimer = null;
+      // التهيئة المسبقة بقياس الصوت وحده (في الخيط، عشرات الملّي ثانية): لا تُشغل العامل
+      // فيتأخّر التحقّق اللحظي إن بدأ القارئ التسجيل — وتُرقّى بعد أول تحليل
+      void get().evaluateReciter({ auto: true, fastOnly: true });
+    }, delayMs);
+  },
+
+  applyReference: () => {
+    const { result, selectedSurahId, selectedAyah, scope, tau, tempo, useReciterGate, refCache, progress, riwayah } = get();
+    if (!result || result.demo || scope !== 'ayah') return;
+    if (result.targetKey !== `${selectedSurahId}:ayah:${selectedAyah}`) return;
+    const { reciter } = get().referenceOf();
+    const ref = refCache[refKey(selectedSurahId, selectedAyah, reciter.id)];
+    if (!ref) return;
+    // النتيجة الأصلية (بلا تحكيم) هي أساس الضمّ — فلا يتراكم تحكيمٌ على تحكيم
+    const base: AlignmentResult = result.selfPassed === undefined ? result : { ...result, passed: result.selfPassed, reciter: undefined };
+    let final: AlignmentResult = { ...withReference(base, ref, reciter, tau, tempo, useReciterGate), selfPassed: base.passed };
+    const key = `${selectedSurahId}:${riwayah}`;
+    const prev = progress[key]?.[selectedAyah];
+    let nextProgress = progress;
+    const setPassed = (passed: boolean) => {
+      nextProgress = {
+        ...progress,
+        [key]: {
+          ...(progress[key] ?? {}),
+          [selectedAyah]: { ...(prev ?? { bestScore: result.overallScore, lastScore: result.overallScore, at: 0 }), passed, at: Date.now() },
+        },
+      };
+      saveProgress(nextProgress);
+    };
+    if (final.passed && !prev?.passed) {
+      setPassed(true);
+      final = { ...final, progressGranted: true };
+    } else if (!final.passed && prev?.passed && result.progressGranted) {
+      // أجازت الدرجةُ الذاتية الآيةَ قبل أن يحضر المرجع، ثم خالفته التلاوة: يُسحب الاجتياز
+      setPassed(false);
+      final = { ...final, progressGranted: false };
+    }
+    set({ result: final, progress: nextProgress });
   },
 
   init: async () => {
@@ -327,6 +499,10 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       ...(saved.theme ? { theme: saved.theme } : {}),
       ...(typeof saved.useReciterGate === 'boolean' ? { useReciterGate: saved.useReciterGate } : {}),
       ...(typeof saved.instantEval === 'boolean' ? { instantEval: saved.instantEval } : {}),
+      ...(typeof saved.referenceChoice === 'string' ? { referenceChoice: saved.referenceChoice } : {}),
+      ...(saved.recitationStyle === 'murattal' || saved.recitationStyle === 'mujawwad'
+        ? { recitationStyle: saved.recitationStyle }
+        : {}),
     });
     applyTheme(get().theme);
     if (get().surahsStatus === 'ready') return;
@@ -355,6 +531,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       const cached = surahCache.get(id);
       if (cached) {
         set((s) => ({ surahCache: { ...s.surahCache, [id]: cached }, surahStatus: 'ready' }));
+        get().schedulePrefetch();
         return;
       }
       set({ surahStatus: 'loading' });
@@ -362,21 +539,38 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
         const d = await fetchSurah(id);
         surahCache.set(id, d);
         set((s) => ({ surahCache: { ...s.surahCache, [id]: d }, surahStatus: 'ready' }));
+        get().schedulePrefetch();
       } catch {
         set({ surahStatus: 'error' });
       }
     })();
   },
 
-  selectAyah: (n) => set({ selectedAyah: n, result: null, activeWord: -1, refEval: { status: 'idle', key: '', stage: '', error: null } }),
+  selectAyah: (n) => {
+    set({ selectedAyah: n, result: null, activeWord: -1, refEval: { status: 'idle', key: '', stage: '', error: null } });
+    // القارئ المرجعي حاضرٌ في كل تحليل: يُهيَّأ مرجعُ الآية في الخلفية ولو لم يُطلب
+    get().schedulePrefetch();
+  },
   setScope: (scope) => set({ scope }),
   setRiwayah: (riwayah) => {
-    set({ riwayah, result: null, activeWord: -1, refEval: { status: 'idle', key: '', stage: '', error: null } });
+    // القارئ المختار من روايةٍ أخرى لا يصلح مرجعًا: يعود الاختيار تلقائيًّا
+    const { referenceChoice, recitationStyle } = get();
+    const keep = referenceChoice === 'auto' || resolveReciter(riwayah, get().tempo, recitationStyle, referenceChoice).auto === false;
+    set({
+      riwayah,
+      result: null,
+      activeWord: -1,
+      refEval: { status: 'idle', key: '', stage: '', error: null },
+      ...(keep ? {} : { referenceChoice: 'auto' }),
+      ...(stylesFor(riwayah).includes(recitationStyle) ? {} : { recitationStyle: 'murattal' as RecitationStyle }),
+    });
     persistSettings(get);
+    get().schedulePrefetch();
   },
   setTempo: (tempo) => {
     set({ tempo, result: null, activeWord: -1, refEval: { status: 'idle', key: '', stage: '', error: null } });
     persistSettings(get);
+    get().schedulePrefetch();
   },
   setActiveTab: (activeTab) => set({ activeTab }),
   setModelSize: (modelSize) => {
@@ -422,16 +616,15 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
     const { selectedSurahId, selectedAyah, scope, riwayah, tempo, tau, progress, useReciterGate, refCache } = get();
 
     // التحكيم بالقارئ المعتمد: إن وُجد مرجعٌ لهذه الآية فتُقارن به تلاوةُ المستخدم،
-    // والمطابقة ≥ حدّ الاجتياز هي التي تُجيز العبور («فإن صحّت جتاز»).
-    let final: AlignmentResult = result;
-    if (!result.demo && scope === 'ayah' && useReciterGate) {
-      const ref = refCache[`${selectedSurahId}:${selectedAyah}:${riwayah}:${tempo}`];
-      if (ref) {
-        // بوّابة النصّ واحدة في البابين: لا يُجيز التوقيتُ (ولا مطابقةُ القارئ) نصًّا لم يتبيّن
-        const textOk = result.textCheck === 'ok' || result.textCheck === 'demo';
-        const cmp = compareWithReciter(result.words, ref, tau, textOk, ref.label, result.textCheck);
-        if (cmp) final = { ...result, reciter: cmp, passed: cmp.passed && textOk };
-      }
+    // ويُشترط للاجتياز (إن كان مفعّلًا) أن تجتاز الدرجةُ الذاتية ومطابقةُ القارئ معًا.
+    // وإن لم يكن المرجع جاهزًا بعدُ هُيِّئ في الخلفية وضُمّ إلى النتيجة متى جهز.
+    const { reciter } = get().referenceOf();
+    let final: AlignmentResult = { ...result, selfPassed: result.passed };
+    let needRef = false;
+    if (!result.demo && scope === 'ayah') {
+      const ref = refCache[refKey(selectedSurahId, selectedAyah, reciter.id)];
+      if (ref) final = { ...withReference(result, ref, reciter, tau, tempo, useReciterGate), selfPassed: result.passed };
+      needRef = !ref || ref.quality === 'fast';
     }
 
     let nextProgress = progress;
@@ -439,6 +632,9 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       const key = `${selectedSurahId}:${riwayah}`;
       const prev = progress[key]?.[selectedAyah];
       const passed = final.passed || !!prev?.passed;
+      // اجتيازٌ منحته هذه النتيجة الآن (لم يكن قبلها) — فإن جاء مرجعُ القارئ بعدها
+      // فخالفته التلاوة سُحب (applyReference)؛ فالمرجع هو الفيصل متى حضر.
+      final = { ...final, progressGranted: final.passed && !prev?.passed };
       const rec: AyahRecord = {
         bestScore: Math.max(prev?.bestScore ?? 0, final.overallScore),
         lastScore: final.overallScore,
@@ -449,6 +645,14 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       saveProgress(nextProgress);
     }
     set({ result: final, activeWord: -1, activeTab: 'result', progress: nextProgress });
+    // بعد أن تفرغ الواجهة من التحليل (processing) يُهيَّأ المرجع أو يُرقّى، ثم يُضمّ
+    if (needRef) {
+      if (prefetchTimer) clearTimeout(prefetchTimer);
+      prefetchTimer = setTimeout(() => {
+        prefetchTimer = null;
+        void get().evaluateReciter({ auto: true });
+      }, 600);
+    }
   },
 
   advanceAyah: () => {

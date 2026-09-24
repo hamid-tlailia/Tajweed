@@ -199,6 +199,8 @@ export function buildCoach(
   matchSource: 'transcript' | 'coverage' | 'demo',
   tempoScale = 1,
   text: TextGateInfo = { textCheck: matchSource === 'demo' ? 'demo' : matchSource === 'coverage' ? 'unverified' : 'ok' },
+  /** سرعة القارئ نسبةً إلى القارئ المرجعي (انظر tempo.ts) — إن لم تُمرَّر عُدّت tempoScale نفسها */
+  pace?: { relative: number; anchored: boolean; refName?: string },
 ): { tips: CoachTip[]; summary: string; passed: boolean } {
   const tips = words.map(tipFor).filter((x): x is CoachTip => !!x);
   const n = words.length || 1;
@@ -267,11 +269,16 @@ export function buildCoach(
   }
 
   // ملاحظة السرعة لا معنى لها إن لم يكن المقروء هو الآية
-  if (textOk && tempoScale && (tempoScale < 0.82 || tempoScale > 1.22)) {
-    const dir = tempoScale < 1 ? 'أسرع' : 'أبطأ';
+  const rel = pace ? pace.relative : tempoScale;
+  if (textOk && rel && Number.isFinite(rel) && (rel < 0.8 || rel > 1.25)) {
+    const dir = rel < 1 ? 'أسرع' : 'أبطأ';
+    const who = pace?.refName ? `من القارئ المرجعي (${pace.refName})` : 'من مرتبتك المختارة';
     parts.push(
-      `قراءتك ${dir} من مرتبتك المختارة بنحو ${tempoScale.toFixed(2)}× — قِيسَتْ أحكامُك بعدلة سرعتك،` +
-        ` والأزمنة المعروضة لك هي أزمنة مرتبتك أنت. قرِّب سرعتك من المرتبة المختارة ليصفو القياس.`,
+      pace?.anchored
+        ? `قراءتك ${dir} ${who} بنحو ${rel.toFixed(2)}× — والآية قصيرةٌ أو كلماتُها مدودٌ لازمة، فلا تُقاس ` +
+            `بسرعتك أنت بل بسرعته: ${rel < 1 ? 'أتمم المدود بمقاديرها كاملةً' : 'لا تُجاوز مقادير المدود'}.`
+        : `قراءتك ${dir} ${who} بنحو ${rel.toFixed(2)}× — قِيسَتْ أحكامُك بعدلة سرعتك في حدود مرتبته،` +
+            ` فما جاوز الحدود ظهر في كلماته. قرِّب سرعتك من سرعته ليصفو القياس.`,
     );
   }
 

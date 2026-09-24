@@ -11,7 +11,8 @@ import { ayahLabel, classifyUtterance, loadCorpus, utteranceTokens } from './cor
 import { editClose, normalizeForMatch, scoreTranscriptMatch, textCheckOf } from './match';
 import type { TranscriptScore } from './match';
 import { BASMALA_WORDS, startsWithBasmalaWords, targetTextOf } from './quran';
-import { analyzeTargetWords, classifyWord, normalizeArabic, tajweedScore, verdictFor } from './tajweed';
+import { TEMPO_SCALE, analyzeTargetWords, classifyWord, normalizeArabic, scaledWindow, tajweedScore, verdictFor } from './tajweed';
+import { estimateTempo, lenientMin, priorCenter } from './tempo';
 import type { TextCheck } from './types';
 import type {
   AlignmentResult,
@@ -24,7 +25,7 @@ import type {
   WordAlignment,
   WordTajweed,
 } from './types';
-import { clamp, mean, median } from './util';
+import { clamp, mean } from './util';
 import { loadWhisper, whisperForcedAlignment, whisperTranscribeChunked, type TsChunk } from './whisper';
 
 export interface AlignInput {
@@ -46,6 +47,11 @@ export interface AlignOpts {
    * (لا نصّ مسموعًا) لكن أزمنةَ الكلمات تُقاس بالمحرّك نفسه.
    */
   fast?: boolean;
+  /**
+   * القارئ المرجعي (المختار أو التلقائي بحسب المرتبة ونوع التلاوة): سرعته المقيسة
+   * مركزُ عدلة السرعة — فكل تحليلٍ يُقاس إلى قارئٍ معتمد لا إلى نفسه.
+   */
+  reference?: { id: string; name: string; pace: number | null };
 }
 
 export interface AlignHooks {
@@ -186,22 +192,26 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const spans = computeWordSpans(energy, mids, tjs.map((t) => t.expectedMs), durationMs);
   const measuredMs = spans.map((sp) => Math.max(0, sp.endMs - sp.startMs));
 
-  // عدلة السرعة: وسطيُ نِسَب الأزمنة المقاسة إلى المتوقَّعة.
-  // الحكم على كلمةٍ يكون إلى نموذج الأزمنة «بسرعة القارئ نفسه» لا بسرعة نظرية
-  // مطلقة؛ وإلا عوقب من يقرأ مرتبةً أسرع أو أبطأ بـ«أقصر» على كل كلمة، وعوقب
-  // من يقرأ بترتيلٍ متأنٍّ بـ«أطول» على كل كلمة — فتتعارض التنبيهات بلا سبب.
-  const ratios: number[] = [];
-  for (let i = 0; i < measuredMs.length; i++) {
-    if (measuredMs[i] >= MIN_VOICED_MS && tjs[i].expectedMs > 0) ratios.push(measuredMs[i] / tjs[i].expectedMs);
-  }
-  const tempoScale = clamp(median(ratios) || 1, 0.35, 3);
+  // عدلة السرعة — مرجَّحةٌ بالقارئ المرجعي ومحدودةٌ حوله (انظر tempo.ts):
+  // لا يُعاقَب من قرأ أسرع أو أبطأ قليلًا من مرتبته بـ«أقصر/أطول» على كل كلمة،
+  // ولا يقيس القارئُ نفسَه بنفسه — فآيةٌ من كلمةٍ واحدة (الٓمٓ) كانت نسبتُها هي
+  // العدلة، فيطابق المقيسُ المتوقَّعَ أيًّا كان. والسرعة تُقدَّر من الكلمات
+  // الصالحة «مسطرةً» وحدها (بلا مدٍّ لازم ولا فواتح ولا وقف).
+  const tempoEst = estimateTempo(
+    measuredMs.map((m, i) => ({
+      ratio: m >= MIN_VOICED_MS && tjs[i].expectedMs > 0 ? m / tjs[i].expectedMs : NaN,
+      weight: tjs[i].rulerWeight ?? 1,
+    })),
+    { center: priorCenter(opts.reference?.pace, TEMPO_SCALE[tempo] ?? 1) },
+  );
+  const tempoScale = tempoEst.scale;
   const refMs = tjs.map((t) => Math.max(60, t.expectedMs * tempoScale));
   // نافذة الأوجه الجائزة بعدلة السرعة نفسها: فمن قرأ بالقصر أو التوسط أو
   // الإشباع حيث جازت لم يُخطَّأ، ومن نقص عن أدنى الأوجه أُخذ به.
-  const refWin = tjs.map((t) => ({
-    minMs: Math.max(60, Math.min(t.minMs ?? t.expectedMs, t.expectedMs) * tempoScale),
-    maxMs: Math.max(60, Math.max(t.maxMs ?? t.expectedMs, t.expectedMs) * tempoScale),
-  }));
+  const refWin = tjs.map((t) => {
+    const w = scaledWindow(t, tempoScale);
+    return { ...w, minMs: lenientMin(w.minMs, tempoScale, tempoEst.evidence, t.rulerWeight ?? 1) };
+  });
 
   const alignWords: WordAlignment[] = ayahWords.map((w, k) => {
     const i = k + prefixCount; // فهرس الكلمة في قائمة المحاذاة (بعد البسملة إن وُجدت)
@@ -225,6 +235,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
         expectedMs: Math.round(refMs[i]),
         minMs: Math.round(refWin[i].minMs),
         maxMs: Math.round(refWin[i].maxMs),
+        ...(refWin[i].stretchMs ? { stretchMs: Math.round(refWin[i].stretchMs!) } : {}),
       },
     };
   });
@@ -234,8 +245,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const rhythm = mean(
     measuredMs.slice(prefixCount).map((m, k) => tajweedScore(m, refMs[k + prefixCount], opts.tau, refWin[k + prefixCount])),
   );
-  // ملاءمة المرتبة المختارة: انحراف السرعة وحده لا يُسقط الدرجة، لكن أثره يظهر فيها
-  const tempoFit = clamp(1 - Math.abs(Math.log2(tempoScale)) / 2.4, 0, 1);
+  // ملاءمة سرعة القارئ المرجعي: انحراف السرعة وحده لا يُسقط الدرجة، لكن أثره يظهر فيها
+  const tempoFit = clamp(1 - Math.abs(Math.log2(Number.isFinite(tempoEst.raw) ? tempoEst.relative : 1)) / 2.4, 0, 1);
   const meanTj = 0.85 * rhythm + 0.15 * tempoFit;
   const voiced = alignWords.length ? alignWords.filter((w) => w.status !== 'silent').length / alignWords.length : 0;
 
@@ -268,14 +279,24 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     // الأزمنة لا تُحتسب لنصٍّ غير الآية: الدرجة تُقيَّد بمقدار ما تبيّن من النصّ
     overallScore = Math.min(overallScore, Math.round(100 * (0.25 + 0.5 * transcriptMatch)));
   }
-  const coach = buildCoach(alignWords, overallScore, transcriptMatch, matchSource, tempoScale, {
-    textCheck,
-    recall: textRecall,
-    precision: textPrecision,
-    missing: textMissing,
-    kind: textKind,
-    heardOf,
-  });
+  const coach = buildCoach(
+    alignWords,
+    overallScore,
+    transcriptMatch,
+    matchSource,
+    tempoScale,
+    {
+      textCheck,
+      recall: textRecall,
+      precision: textPrecision,
+      missing: textMissing,
+      kind: textKind,
+      heardOf,
+    },
+    Number.isFinite(tempoEst.raw)
+      ? { relative: tempoEst.relative, anchored: tempoEst.anchored, refName: opts.reference?.name }
+      : undefined,
+  );
 
   return {
     targetKey: opts.target.key,
@@ -300,6 +321,9 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     samples,
     tempo,
     tempoScale,
+    tempoRelative: Number.isFinite(tempoEst.raw) ? tempoEst.relative : undefined,
+    tempoAnchored: tempoEst.anchored,
+    reference: opts.reference ? { ...opts.reference } : undefined,
     tips: coach.tips,
     summary: coach.summary,
     passed: coach.passed,
@@ -329,7 +353,11 @@ export function vadThreshold(energy: Float32Array): { thr: number; noiseFloor: n
   };
   const noiseFloor = avg(0, n * 0.05);
   const speechLevel = avg(n * 0.7, n * 0.95);
-  const thr = Math.max(noiseFloor * 3, speechLevel * 0.15, 1e-5);
+  // تسجيلٌ مقصوصٌ لا يكاد يكون فيه صمت (آيةٌ من كلمةٍ واحدة سُجّلت بإحكام، أو مقطعُ
+  // القارئ المعتمد من الأرشيف): أخمسُ إطاراته صوتٌ لا ضجيج، فكانت «الأرضية» × ٣ تعلو
+  // مستوى الكلام نفسه فلا يُعدّ إطارٌ واحدٌ مسموعًا ويُخترع للكلمة زمن. فلا تعلو
+  // العتبة نصفَ مستوى الكلام أبدًا.
+  const thr = Math.max(Math.min(Math.max(noiseFloor * 3, speechLevel * 0.15), speechLevel * 0.5), 1e-5);
   return { thr, noiseFloor, speechLevel };
 }
 
