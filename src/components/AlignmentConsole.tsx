@@ -279,18 +279,22 @@ export default function AlignmentConsole() {
           : 'لم تُجتز — المقروء ليس نصَّ الآية';
   const passTitle = result.reciter
     ? result.passed
-      ? 'اجتزت الآية بمطابقة القارئ المعتمد'
+      ? textUnavailable
+        ? 'اجتزت بقياس الصوت ومطابقة القارئ — لم يتبيّن اللفظ'
+        : 'اجتزت الآية بمطابقة القارئ المعتمد'
       : textOk
         ? !result.reciter.passed
           ? 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
           : 'لم تُجتز — درجتك الذاتية دون الحدّ'
         : textCheck === 'unverified'
           ? textUnavailable
-            ? 'لم تُجتز — لم يتبيّن اللفظ (قِيست الأزمنة وحدها)'
+            ? 'لم تُجتز — الحكمُ بقياس الصوت (لم يتبيّن اللفظ)'
             : 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
           : textFailTitle
     : result.passed
-      ? 'اجتزت الآية'
+      ? textUnavailable
+        ? 'اجتزت بقياس الصوت — لم يتبيّن اللفظ'
+        : 'اجتزت الآية'
       : textOk
         ? 'لم تُجتز بعد'
         : textCheck === 'unverified'

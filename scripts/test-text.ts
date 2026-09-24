@@ -13,6 +13,7 @@ import { collapseLetterNames, normalizeForMatch, scoreTranscriptMatch, textCheck
 import { textGateMessage } from '../src/lib/coach';
 import { buildTarget, targetTextOf, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords, normalizeArabic } from '../src/lib/tajweed';
+import { timingVerdictAllowed } from '../src/lib/types';
 import type { SurahData, WordAlignment } from '../src/lib/types';
 
 let fails = 0;
@@ -298,6 +299,32 @@ async function pipeline() {
     // (المسار اللحظي لا يستمع بالألفاظ: تُختبر هنا صياغةُ الحالة وحدها)
     check('بلا سماعٍ بالألفاظ: لا كلمةَ تُوسم «لم يُسمع لفظُها»', r.words.every((w) => w.textHeard !== false), `${r.words.filter((w) => w.textHeard === false).length}`);
     check('بلا سماعٍ بالألفاظ: لا اجتياز', !r.passed);
+  }
+
+  // أخفق السماع الذكي: الحكمُ بقياس الصوت — يُجاز المتقن ويُصرَّح بأن اللفظ لم يُتحقَّق
+  {
+    const tj = analyzeWords(['ٱلۡحَمۡدُ'], 'hafs', 'tadwir')[0];
+    const w = {
+      index: 0,
+      ayah: 2,
+      word: 'ٱلۡحَمۡدُ',
+      startMs: 0,
+      endMs: tj.expectedMs,
+      confidence: 0.8,
+      status: 'ok',
+      tajweed: tj,
+    } as WordAlignment;
+    const failed = buildCoach([w], 87, 0, 'coverage', 1, { textCheck: 'unverified', textUnavailable: true });
+    check('أخفق السماع وأزمنتُه متقنة: يُجاز', failed.passed, `${failed.passed} · ${failed.summary.slice(0, 60)}`);
+    check('ويُصرَّح بأن الحكم بقياس الصوت', /بقياس الصوت وحده/.test(failed.summary), failed.summary.slice(0, 90));
+    check('ويجوز الحكم بقياس الصوت (timingVerdictAllowed)', timingVerdictAllowed('unverified', true));
+
+    // ولم يُخفق السماع بل لم يُستمع بعد (نتيجةٌ لحظية): لا اجتياز كما كان
+    const instant = buildCoach([w], 87, 0.9, 'coverage', 1, { textCheck: 'unverified' });
+    check('النتيجة اللحظية (بلا إخفاق) لا تُجيز', !instant.passed && !timingVerdictAllowed('unverified'), `${instant.passed}`);
+    // وسماعٌ سمِع لفظًا فخالف الآية: لا اجتياز — تلك مخالفةٌ لا إخفاق
+    const wrong = buildCoach([w], 87, 0.1, 'transcript', 1, { textCheck: 'mismatch', kind: 'speech' });
+    check('ما سُمع فخالف الآية لا يُجاز ولو حسُنت أزمنته', !wrong.passed && !timingVerdictAllowed('mismatch'), `${wrong.passed}`);
   }
 
   // كلمةٌ لم يُسمع لفظُها لا يُنصح في زمنها ولا تُعدّ «جيدة»

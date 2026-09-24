@@ -161,10 +161,16 @@ export async function whisperTranscribeChunked(
     max_new_tokens: 384,
     condition_on_previous_text: false,
   };
+  /**
+   * محاولةٌ أخيرة بلا فرضِ لغةٍ ولا مهمّة: بعض نسخ النموذج (أو بناءِ WASM) تُخرج
+   * نصًّا فارغًا مع رموز اللغة المفروضة، وتُخرج النصّ نفسه إذا تُركت تكتشف اللغة.
+   * وإخفاقُ السماع يُغلق بوّابة النصّ على القارئ المتقن، فتُستنفد المحاولات قبله.
+   */
+  const FREE_DECODE: Record<string, unknown> = { do_sample: false, max_new_tokens: 384 };
 
   /** المسار البسيط (بلا أزمنة): أثبتُ المسارين — يُفكّ الرمزُ منه يدويًّا */
-  async function plainGenerate(inputs: any): Promise<string> {
-    const plain: any = await b.model.generate(inputs, base);
+  async function plainGenerate(inputs: any, opts: Record<string, unknown> = base): Promise<string> {
+    const plain: any = await b.model.generate(inputs, opts);
     if (typeof plain === 'string') return plain.trim();
     // generate() may return a batch array, a single tensor, or a wrapper object
     const p0 = Array.isArray(plain) ? plain[0] : plain?.sequence ?? plain;
@@ -195,12 +201,17 @@ export async function whisperTranscribeChunked(
       console.warn('[TAHQIQQ] generate(return_timestamps) failed → plain retry:', (e as Error)?.message ?? e);
     }
     if (hasArabic(text)) return { text, chunks: rawChunks };
-    try {
-      const t = await plainGenerate(inputs);
-      if (hasArabic(t)) return { text: t, chunks: rawChunks };
-    } catch (e) {
-      if (!text) throw e; // المساران أخفقا: يُترك للمستدعي ليرجع إلى قياس الصوت
+    let failure: unknown = null;
+    for (const opts of [base, FREE_DECODE]) {
+      try {
+        const t = await plainGenerate(inputs, opts);
+        if (hasArabic(t)) return { text: t, chunks: rawChunks };
+      } catch (e) {
+        failure = e;
+      }
     }
+    // المسارات كلها أخفقت ولم يخرج نصّ: يُترك للمستدعي ليرجع إلى قياس الصوت
+    if (failure && !text) throw failure;
     return { text, chunks: rawChunks };
   }
 

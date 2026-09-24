@@ -186,6 +186,7 @@ export default function LiveCoach({
   finalOther = null,
   refining = false,
   modelReady = false,
+  className = 'mt-4',
 }: {
   snapshot: LiveSnapshot | null;
   words: { word: string; ayah: number }[];
@@ -201,6 +202,8 @@ export default function LiveCoach({
   finalOther?: string | null;
   refining?: boolean;
   modelReady?: boolean;
+  /** هوامش اللوحة — تختلف حين تعلو زرَّ الميكروفون */
+  className?: string;
 }) {
   const curRef = useRef<HTMLSpanElement | null>(null);
 
@@ -240,7 +243,7 @@ export default function LiveCoach({
   const alertFresh = !snapshot.finished && alert && Date.now() - alert.at < 4500 ? alert : null;
 
   return (
-    <div className="mt-4 rounded-2xl border border-line/80 bg-ink-900/60 p-4">
+    <div className={`rounded-2xl border border-line/80 bg-ink-900/60 p-4 ${className}`}>
       {/* الرأس: عنوان + عدّاد حي */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">

@@ -527,8 +527,39 @@ export default function RecorderPanel() {
       title="سجّل تلاوتك"
       subtitle="اقرأ بصوت واضح وبهدوء — يُعالَج صوتك على جهازك ولا يُرفَع إلى الإنترنت أبدًا"
     >
-      {/* اسمع الآية من القارئ المعتمد ثم اقرأها — فوق زرّ الميكروفون مباشرةً */}
-      <ReciterListen />
+      {/* اسمع الآية من القارئ المعتمد ثم اقرأها — وتُخفى أثناء التسجيل لتعلو المرافقة */}
+      {!recording ? <ReciterListen /> : null}
+
+      {/* المرافقة الحية فوق زرّ الميكروفون: الكلمات تُضاء مع الصوت بلا تمرير الشاشة */}
+      {liveWords && liveTarget && liveTarget.words.length ? (
+        <LiveCoach
+          snapshot={liveWords}
+          words={liveTarget.words}
+          tjs={liveTjs}
+          recording={recording}
+          alertOn={alertOn}
+          onToggleAlerts={() => setAlertOn(!alertOn)}
+          textCheck={liveText}
+          finalText={
+            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt
+              ? result.textCheck
+              : null
+          }
+          finalKind={
+            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt
+              ? result.textKind ?? null
+              : null
+          }
+          finalOther={
+            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt && result.heardOf
+              ? ayahLabel(result.heardOf)
+              : null
+          }
+          refining={refining}
+          modelReady={modelStatus === 'ready'}
+          className="mb-4 mt-0"
+        />
+      ) : null}
 
       <div className="flex items-start gap-4">
         <button
@@ -578,36 +609,6 @@ export default function RecorderPanel() {
           <IconRefresh className="h-4 w-4" /> إعادة تقييم آخر تسجيل بالإعدادات الحالية
         </button>
       </div>
-
-      {/* المرافقة الحية: أثناء التسجيل وتبقى لمراجعتها بعد الإيقاف */}
-      {liveWords && liveTarget && liveTarget.words.length ? (
-        <LiveCoach
-          snapshot={liveWords}
-          words={liveTarget.words}
-          tjs={liveTjs}
-          recording={recording}
-          alertOn={alertOn}
-          onToggleAlerts={() => setAlertOn(!alertOn)}
-          textCheck={liveText}
-          finalText={
-            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt
-              ? result.textCheck
-              : null
-          }
-          finalKind={
-            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt
-              ? result.textKind ?? null
-              : null
-          }
-          finalOther={
-            result && !result.demo && result.targetKey === liveTarget.key && result.createdAt >= liveStartedAt && result.heardOf
-              ? ayahLabel(result.heardOf)
-              : null
-          }
-          refining={refining}
-          modelReady={modelStatus === 'ready'}
-        />
-      ) : null}
     </Panel>
   );
 }

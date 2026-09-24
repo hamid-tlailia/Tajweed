@@ -29,6 +29,8 @@ export interface CompareOpts {
   /** مرتبة المستخدم المختارة وسرعة القارئ المقيسة — لمركز معامل السرعة */
   tempo?: Tempo;
   refPace?: number | null;
+  /** أخفق السماع الذكي: قُبلت المقارنة بالأزمنة وحدها ويُصرَّح بذلك */
+  textUnavailable?: boolean;
 }
 
 /**
@@ -91,7 +93,10 @@ export function compareWithReciter(
   let matchPct = Math.round(100 * mean(perWord.map((p) => p.sim)));
   let note: string | undefined;
 
-  if (!textOk) {
+  if (textOk && opts.textUnavailable) {
+    note =
+      'لم يتبيّن اللفظ بالسماع الذكي، فقُورنت أزمنتُك بأزمنة القارئ وحدها — تأكّد أنك قرأت الآية المختارة.';
+  } else if (!textOk) {
     // ما سُمع من الألفاظ بعيد عن الآية (أو لم يُسمع بعد) — لا يُجيز التوقيتُ وحده
     matchPct = Math.min(matchPct, 45);
     note =
