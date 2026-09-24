@@ -314,6 +314,32 @@ async function main() {
       `${Math.round(spans[1].startMs - spans[0].endMs)} م.ث`,
     );
 
+    // آخرُ الآية يخفت صوتُه (المدّ العارض عند الوقف): كانت تُقاس ٠٫٠٢ ث و«لم تُسمع»
+    {
+      const loud = recite(expected.slice(0, -1));
+      const soft = recite([expected[expected.length - 1]]);
+      const all = new Float32Array(loud.length + soft.length);
+      all.set(loud, 0);
+      for (let i = 0; i < soft.length; i++) all[loud.length + i] = soft[i] * 0.06; // ذيلٌ خافت
+      const en = energyEnvelope(all, 20);
+      const dur = (all.length / 16000) * 1000;
+      const last = expected.length - 1;
+      // مواضعُ الكلمات الجهيرة في مراكزها، وموضعُ الأخيرة في السكوت الذي بعد الخافت
+      const mids: number[] = [];
+      let acc = 0;
+      for (const e of expected) {
+        mids.push(acc + e / 2);
+        acc += e + 90; // سكتة التوليد بين الكلمات
+      }
+      mids[last] = dur - 30;
+      const sp = computeWordSpans(en, mids, expected, dur)[last];
+      check(
+        'الكلمة الأخيرة الخافتة تستردّ صوتها (لا ٠٫٠٢ ث)',
+        sp.endMs - sp.startMs >= MIN_HEARD,
+        `${Math.round(sp.endMs - sp.startMs)} م.ث من ${Math.round(expected[last])}`,
+      );
+    }
+
     // وكلمةٌ متروكةٌ حقًّا لا تُستردّ: ليس بجوارها صوتٌ مهمَل ولا جارتُها تسعها
     const dropped = tjs.map((t, i) => (i === 1 ? 0 : t.expectedMs));
     const r = await judge(d1, 1, dropped, 'tadwir');

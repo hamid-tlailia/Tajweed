@@ -489,6 +489,29 @@ export default function AlignmentConsole() {
         />
       </div>
 
+      {/* تشخيصُ إخفاق السماع: ماذا أخرج النموذج فعلًا — ليُعرف موضعُ الخلل */}
+      {textUnavailable ? (
+        <div className="mt-3 rounded-xl border border-line bg-ink-850/50 p-3.5">
+          <h4 className="text-[11px] text-slate-400">تشخيص السماع الذكي</h4>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300">
+            عمل النموذج على صوتك ولم يُخرج لفظًا عربيًّا واحدًا
+            {result.transcript ? (
+              <>
+                {' '}
+                — بل أخرج: <span className="font-quran text-slate-200">«{result.transcript}»</span>
+              </>
+            ) : (
+              ' ولا أيَّ نصّ'
+            )}
+            . المحرّك: <span className="text-slate-200">{ENGINE_LABEL[result.engine] ?? result.engine}</span>.
+          </p>
+          <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
+            إن تكرّر هذا في كل تسجيل: بدّل نموذج السماع إلى «الأدقّ» من الإعدادات، وسجّل في مكانٍ هادئ قريبًا من
+            الميكروفون. والحكمُ في هذه الأثناء بقياس الصوت وحده.
+          </p>
+        </div>
+      ) : null}
+
       {result.transcript && result.matchSource === 'transcript' ? (
         <div className={`mt-3 rounded-xl border p-3.5 ${textOk ? 'border-line bg-ink-850/50' : 'border-danger-500/40 bg-danger-500/10'}`}>
           <h4 className="text-[11px] text-slate-400">
