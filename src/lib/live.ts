@@ -354,7 +354,12 @@ export class LiveTajweedTracker {
 
     // أرضية ضجيج تكيّفية
     const thr = Math.max(this.floorEma * 2.1, START_THR * 0.6, 0.007);
-    if (rms < thr) this.floorEma = this.floorEma * 0.985 + Math.min(rms, this.floorEma) * 0.015 + 0.00002;
+    // عتبة الامتداد (hysteresis): الصوت الجاري يبقى صوتًا ما دام فوق نصف العتبة —
+    // فذيلُ المدّ الممسوك يخفت تدريجًا (ولا سيّما عند الوقف آخر الآية، ومع كابت
+    // الضجيج في الهواتف)، وكانت العتبة الواحدة تُسقط آخره فتبدو الكلمة الأخيرة
+    // «أقصر» دائمًا. البدء وحده يحتاج العتبة الكاملة.
+    const voiced = rms > thr || (this.silenceMs === 0 && this.lastVoiceT > 0 && rms > Math.max(this.floorEma * 1.4, thr * 0.45));
+    if (!voiced) this.floorEma = this.floorEma * 0.985 + Math.min(rms, this.floorEma) * 0.015 + 0.00002;
 
     // غلافان: سريعٌ لكشف الانخفاض (زمنُه مستقلّ عن معدّل الإطارات)، وبطيءٌ للاستدامة
     const ka = 1 - Math.exp(-dt / TAU_ATTACK);
@@ -362,7 +367,7 @@ export class LiveTajweedTracker {
     this.envFast += (rms - this.envFast) * (rms > this.envFast ? ka : kr);
     this.envSlow += (rms - this.envSlow) * (1 - Math.exp(-dt / TAU_SLOW));
 
-    if (rms > thr) {
+    if (voiced) {
       if (!this.started && rms > START_THR) this.started = true;
       this.lastVoiceT = tMs;
       this.voicedTotal += dt;

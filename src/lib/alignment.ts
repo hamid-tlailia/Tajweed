@@ -102,6 +102,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   /** ماذا يشبه المسموع بمطابقة المصحف كلّه: الآية / آية أخرى / كلام عادي */
   let textKind: AlignmentResult['textKind'];
   let heardOf: AlignmentResult['heardOf'];
+  /** السماع الذكي استمع فعلًا فلم يتبيّن في الصوت لفظٌ عربيٌّ واحد */
+  let heardNothing = false;
 
   if (!input.demo && !opts.fast) {
     try {
@@ -121,6 +123,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       const sc = scoreTranscriptMatch(transcript, targetTextOf(opts.target));
       transcriptMatch = sc.match;
       predWords = sc.predWords;
+      heardNothing = sc.empty;
       if (!sc.empty) {
         scored = sc;
         matchSource = 'transcript';
@@ -191,6 +194,21 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   // precise start/end via per-word voiced-span VAD around each midpoint
   const spans = computeWordSpans(energy, mids, tjs.map((t) => t.expectedMs), durationMs);
   const measuredMs = spans.map((sp) => Math.max(0, sp.endMs - sp.startMs));
+  // صوتٌ مسموعٌ خارج كلمات الآية كلها (كلامٌ قبلها أو بعدها، أو آيةٌ أخرى):
+  // لا يُعرف لفظُه بلا سماعٍ ذكي، لكن يُنبَّه إليه في النتيجة اللحظية بدل السكوت عنه
+  const extraVoiceMs = (() => {
+    const { thr } = vadThreshold(energy);
+    const ayahSpans = spans.slice(prefixCount);
+    let total = 0;
+    let extra = 0;
+    for (let f = 0; f < energy.length; f++) {
+      if (energy[f] < thr) continue;
+      total++;
+      const t = f * FRAME_MS + FRAME_MS / 2;
+      if (!ayahSpans.some((sp) => t >= sp.startMs && t < sp.endMs)) extra++;
+    }
+    return extra * FRAME_MS >= 700 && extra >= 0.35 * total ? extra * FRAME_MS : 0;
+  })();
 
   // عدلة السرعة — مرجَّحةٌ بالقارئ المرجعي ومحدودةٌ حوله (انظر tempo.ts):
   // لا يُعاقَب من قرأ أسرع أو أبطأ قليلًا من مرتبته بـ«أقصر/أطول» على كل كلمة،
@@ -263,6 +281,14 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource = 'demo';
     predWords = ayahWords.map((w) => ({ word: normalizeArabic(w.word), ok: true }));
     textCheck = 'demo';
+  } else if (matchSource !== 'transcript' && heardNothing && voicedMsOf(energy) >= 300) {
+    // استمع السماعُ الذكي إلى صوتٍ بيّن فلم يتبيّن فيه لفظٌ عربيّ واحد: هذا ليس
+    // «لم يُتحقَّق بعد» (كانت تُعرض عندها أزمنتُه ٨٩٪ «نتيجةً أولية» مهما قيل) — بل
+    // لم يُسمع نصُّ الآية. فلا اجتياز، وتُقيَّد الدرجة كما يُقيَّد النصّ المخالف.
+    transcriptMatch = 0;
+    matchSource = 'transcript';
+    textCheck = 'weak';
+    textKind = 'unknown';
   } else if (matchSource !== 'transcript') {
     // (ومنه التقييم اللحظي: لا يستمع بالألفاظ، فتُعرض تغطية الكلمات المسموعة — بلا اجتياز)
     transcriptMatch = voiced;
@@ -292,6 +318,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       missing: textMissing,
       kind: textKind,
       heardOf,
+      heardNothing: textCheck === 'weak' && heardNothing,
+      extraVoiceMs: textCheck === 'unverified' ? extraVoiceMs : 0,
     },
     Number.isFinite(tempoEst.raw)
       ? { relative: tempoEst.relative, anchored: tempoEst.anchored, refName: opts.reference?.name }
@@ -361,6 +389,12 @@ export function vadThreshold(energy: Float32Array): { thr: number; noiseFloor: n
   return { thr, noiseFloor, speechLevel };
 }
 
+/** مجموع الزمن المصوَّت في التسجيل (م.ث) */
+function voicedMsOf(energy: Float32Array): number {
+  const { thr } = vadThreshold(energy);
+  return voicedRuns(energy, thr).reduce((a, r) => a + (r.to - r.from + 1) * FRAME_MS, 0);
+}
+
 /* ------------------------------------------------------------------ */
 
 /**
@@ -391,7 +425,15 @@ export function computeWordSpans(
   if (!n) return midsMs.map((m) => ({ startMs: m, endMs: m }));
 
   // speech level & noise floor over the whole envelope
-  const { thr } = vadThreshold(energy);
+  const { thr, noiseFloor, speechLevel } = vadThreshold(energy);
+  /**
+   * عتبة الامتداد (hysteresis): الكلمة تبتدئ من إطارٍ فوق `thr`، ثم تمتدّ ما
+   * دام الصوت فوق هذه العتبة الأدنى. فذيلُ المدّ الممسوك يخفت تدريجًا (ولا
+   * سيّما عند الوقف آخرَ الآية، ومع كابت الضجيج في الهواتف) — وكانت العتبة
+   * الواحدة تبتر آخره فتُحكم الكلمةُ الأخيرة «أقصر» دائمًا. وكذلك البدءُ
+   * الليّن (همزةٌ خفيفة، ألفُ الوصل).
+   */
+  const relThr = Math.min(thr, Math.max(noiseFloor * 2, speechLevel * 0.06, 1e-5));
   const DIP = 3; // frames of momentary dip tolerated inside a word (~60 ms)
 
   const frameOf = (ms: number) => Math.max(0, Math.min(n - 1, Math.round(ms / frameMs)));
@@ -417,30 +459,35 @@ export function computeWordSpans(
     let s = midF;
     let dip = 0;
     let lastVoiced = energy[midF] >= thr ? midF : -1;
+    let firstVoiced = lastVoiced;
     while (s > lo) {
       s--;
-      if (energy[s] >= thr) {
-        lastVoiced = s;
+      if (energy[s] >= relThr) {
+        firstVoiced = s;
+        if (energy[s] >= thr) lastVoiced = Math.max(lastVoiced, s);
         dip = 0;
       } else if (++dip > DIP) break;
     }
     // walk forward
     let e = midF;
+    let endVoiced = lastVoiced;
     dip = 0;
     while (e < hi) {
       e++;
-      if (energy[e] >= thr) {
-        lastVoiced = Math.max(lastVoiced, e);
+      if (energy[e] >= relThr) {
+        if (energy[e] >= thr) lastVoiced = Math.max(lastVoiced, e);
+        endVoiced = Math.max(endVoiced, e);
         dip = 0;
       } else if (++dip > DIP) break;
     }
 
-    if (lastVoiced < 0 || (lastVoiced - s + 1) * frameMs < MIN_VOICED_MS) {
+    // لا بدّ من صوتٍ صريح (فوق العتبة) في الكلمة؛ والعتبة الأدنى تمدّ حدودها فحسب
+    if (lastVoiced < 0 || (endVoiced - firstVoiced + 1) * frameMs < MIN_VOICED_MS) {
       // nothing voiced around this midpoint → honest "not heard", no invented span
       out.push({ startMs: midsMs[i], endMs: midsMs[i] });
       continue;
     }
-    out.push({ startMs: s * frameMs, endMs: (lastVoiced + 1) * frameMs });
+    out.push({ startMs: Math.max(0, firstVoiced) * frameMs, endMs: (endVoiced + 1) * frameMs });
   }
 
   // Resolve overlaps at the quietest frame between the two words. Guarantees
@@ -485,7 +532,7 @@ export function computeWordSpans(
   // قد يُسقط القارئ كلمةً فيبقى مكانَها سكوتٌ لا صوتَ فيه، ثم تتقدّم الكلمةُ التالية إليه
   // فيبدو زمنُها المقاس أطولَ كثيرًا (وهو ما ترصده الدالةُ أعلاه «طويلة» لا «لم تُسمع»).
   // فأمارةُ الإسقاط: أن تبتدئ الكلمةُ بعد فجوةِ سكوتٍ صريحة (١٢٠ م.ث فأكثر: لا يتّسع لها
-  // داخل الكلمة عادةً) ويكون زمنُها المقاس — مع ذلك — يزيد على ١٫٥ من وتيرة القارئ نفسه.
+  // داخل الكلمة عادةً) ويكون زمنُها المقاس — مع ذلك — يزيد على ١٫٣ من وتيرة القارئ نفسه.
   // حينئذٍ يُبطَل زمنُها وتُحكم «لم تُسمع» — وهو ما لا يُدركه قياسُ الزمن وحده.
   {
     const holes: { from: number; to: number }[] = [];
@@ -512,7 +559,7 @@ export function computeWordSpans(
         const sp = out[i];
         if (expectedMs[i] <= 0 || sp.startMs <= 2 * frameMs) continue;
         const measured = sp.endMs - sp.startMs;
-        if (measured < 1.5 * scale * expectedMs[i]) continue;
+        if (measured < 1.3 * scale * expectedMs[i]) continue;
         // فجوةٌ يبتدئ الصوتُ بعدها: بدايةُ الكلمة داخل سكوتٍ لا صوتَ فيه
         const hit = holes.find(
           (h) => sp.startMs >= h.from * frameMs - 2 * frameMs && sp.startMs <= (h.to + 1) * frameMs + 2 * frameMs,
@@ -523,7 +570,10 @@ export function computeWordSpans(
     }
   }
 
-  if (out.length) out[0].startMs = Math.max(0, Math.min(out[0].startMs, 120));
+  // (كانت بدايةُ الكلمة الأولى تُسحب إلى أول التسجيل دائمًا — فيُحسب الصمتُ قبل
+  // التلاوة من زمنها: «الٓمٓ» قُرئت في ٠٫٨ ث بعد ٢٫٥ ث من السكوت فقيست ٣٫٢ ث
+  // وحُكمت «جيدة»، وكانت أول كلمةٍ في كل آية «أطول» فتنتفخ عدلةُ السرعة وتبدو
+  // الأخيرةُ «أقصر». الآن تبتدئ حيث يبتدئ صوتها.)
   for (const o of out) {
     o.startMs = Math.max(0, Math.min(durationMs, o.startMs));
     o.endMs = Math.max(o.startMs, Math.min(durationMs, o.endMs));

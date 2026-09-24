@@ -115,6 +115,10 @@ export interface TextGateInfo {
   kind?: 'target' | 'quran' | 'speech' | 'unknown';
   /** أقرب آيةٍ أخرى إن كان المسموع آيةً غيرها */
   heardOf?: { surahId: number; surahName: string; ayah: number; match: number };
+  /** استمع السماع الذكي إلى صوتٍ بيّن فلم يتبيّن فيه لفظٌ عربيٌّ واحد */
+  heardNothing?: boolean;
+  /** صوتٌ مسموعٌ خارج كلمات الآية (م.ث) — يُنبَّه إليه في النتيجة اللحظية */
+  extraVoiceMs?: number;
 }
 
 /** «الفلق» (سُمع بدلها «الناس») */
@@ -143,6 +147,12 @@ export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: 
     return (
       `المقروء ليس نصَّ هذه الآية — بل يُشبه ${ayahLabel(info.heardOf)} (تشابهٌ ${m}٪). ` +
       'إن كنت تقرؤها فاخترها من تبويب التمرين، وإلا فاقرأ الآية المختارة كما في المصحف.'
+    );
+  }
+  if (info.heardNothing) {
+    return (
+      'استمع السماع الذكي إلى صوتك فلم يتبيّن فيه لفظٌ من نصّ الآية — فلا تُحتسب الأزمنة وحدها. ' +
+      'اقرأ الآية المختارة كما في المصحف بصوتٍ واضحٍ قريبٍ من الميكروفون (وإن تكرّر ذلك فجرّب النموذج «الأدقّ»).'
     );
   }
   if (info.textCheck === 'mismatch' && info.kind === 'speech') {
@@ -232,6 +242,12 @@ export function buildCoach(
   if (!textOk) {
     if (gateMsg) parts.push(gateMsg);
     if (text.textCheck === 'unverified') {
+      if (text.extraVoiceMs) {
+        parts.push(
+          `وسُمع صوتٌ زائدٌ على كلمات الآية (نحو ${(text.extraVoiceMs / 1000).toFixed(1)} ث) — لعلّك قرأت غيرها أو تكلّمت؛ ` +
+            'ولا يُعرف لفظُه إلا بالسماع الذكي.',
+        );
+      }
       parts.push(
         timingPassed
           ? `أزمنتك لحظيًّا حسنة (${score}%، ${good} من ${n} كلمة في المقدار) — وتُعتمد بعد التحقّق من النصّ.`

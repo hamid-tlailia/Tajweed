@@ -245,6 +245,8 @@ export default function AlignmentConsole() {
   const matchPct = Math.round(result.transcriptMatch * 100);
   const textCheck = result.textCheck ?? (result.matchSource === 'demo' ? 'demo' : result.matchSource === 'coverage' ? 'unverified' : 'ok');
   const textOk = textCheck === 'ok' || textCheck === 'demo';
+  /** استمع السماع الذكي فلم يتبيّن في الصوت لفظٌ عربيٌّ واحد */
+  const heardNothing = textCheck === 'weak' && result.matchSource === 'transcript' && !result.predWords.length;
   const matchSub =
     textCheck === 'unverified'
       ? 'لم يُتحقَّق من النصّ — هذه تغطية الكلمات المسموعة فقط'
@@ -256,6 +258,8 @@ export default function AlignmentConsole() {
             : result.textKind === 'speech'
               ? 'ما سُمع كلامٌ عاديٌّ ليس من القرآن'
               : 'ما سُمع ليس نصَّ هذه الآية'
+          : heardNothing
+            ? 'لم يتبيّن في صوتك لفظٌ من نصّ الآية'
           : textCheck === 'weak'
             ? result.textKind === 'quran' && result.heardOf
               ? `المقروء يُشبه آيةً أخرى: ${ayahLabel(result.heardOf)}`
@@ -269,6 +273,8 @@ export default function AlignmentConsole() {
       ? 'لم تُجتز — المقروء كلامٌ عاديٌّ ليس من القرآن'
       : result.textKind === 'quran' && result.heardOf
         ? `لم تُجتز — المقروء آيةٌ أخرى (${ayahLabel(result.heardOf)})`
+        : heardNothing
+          ? 'لم تُجتز — لم يُسمع نصّ الآية'
         : textCheck === 'weak'
           ? 'لم تُجتز — لم يتبيّن نصّ الآية كاملًا'
           : 'لم تُجتز — المقروء ليس نصَّ الآية';
