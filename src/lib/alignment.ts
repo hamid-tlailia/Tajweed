@@ -565,18 +565,32 @@ export function computeWordSpans(
         out[q] = { startMs: a, endMs: Math.max(a + frameMs, b) };
       }
     };
+    /**
+     * الصوت المهمَل في نافذة: يُبحث أولًا بعتبة الكلام، فإن لم يُوجد شيء فبالعتبة
+     * الأدنى — فآخرُ الآية يخفت صوتُه (مدٌّ عارضٌ عند الوقف، وكابتُ الضجيج في
+     * الهواتف يزيده خفوتًا) فيقع دون عتبة الكلام كلِّه، فتُحكم الكلمة الأخيرة
+     * «لم تُسمع» وقد قُرئت. ويُشترط في الخافت أن يعلو أرضيةَ الضجيج بيّنًا لئلا
+     * يُتَّخذ نفَسٌ أو ضجيجٌ كلمةً.
+     */
     const voicedSpan = (fromMs: number, toMs: number): [number, number] | null => {
       const a = Math.max(0, Math.ceil(fromMs / frameMs));
       const b = Math.min(n - 1, Math.floor(toMs / frameMs) - 1);
-      let first = -1;
-      let last = -1;
-      for (let f = a; f <= b; f++) {
-        if (energy[f] < thr) continue;
-        if (first < 0) first = f;
-        last = f;
+      for (const level of [thr, relThr]) {
+        let first = -1;
+        let last = -1;
+        let peak = 0;
+        for (let f = a; f <= b; f++) {
+          if (energy[f] < level) continue;
+          if (first < 0) first = f;
+          last = f;
+          if (energy[f] > peak) peak = energy[f];
+        }
+        if (first < 0 || (last - first + 1) * frameMs < MIN_VOICED_MS) continue;
+        // الخافتُ يُقبل إن علا أرضيةَ الضجيج بيّنًا — لا إن كان الضجيجَ نفسَه
+        if (level < thr && peak < Math.max(noiseFloor * 3, 1e-5)) continue;
+        return [first * frameMs, (last + 1) * frameMs];
       }
-      if (first < 0 || (last - first + 1) * frameMs < MIN_VOICED_MS) return null;
-      return [first * frameMs, (last + 1) * frameMs];
+      return null;
     };
     const sizeOf = (k: number) => out[k].endMs - out[k].startMs;
 

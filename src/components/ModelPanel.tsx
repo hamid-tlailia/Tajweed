@@ -8,8 +8,8 @@ import { Badge, Panel } from './ui';
 const TEMPOS: Tempo[] = ['hadr', 'tadwir', 'tartil'];
 
 const SIZES: { id: ModelSize; label: string; size: string; hint: string }[] = [
-  { id: 'tiny', label: 'سريعة', size: '٤٣ م.ب', hint: 'تنزيل أخفّ — تكفي للتدريب اليومي' },
-  { id: 'base', label: 'أدقّ', size: '٨٠ م.ب', hint: 'تمييز أدقّ لأصوات الحروف — يُوصى بها' },
+  { id: 'tiny', label: 'سريعة', size: 'نحو ٦٠ م.ب', hint: 'تنزيل أخفّ — تكفي للتدريب اليومي' },
+  { id: 'base', label: 'أدقّ', size: 'نحو ١٢٠ م.ب', hint: 'تمييز أدقّ لأصوات الحروف — يُوصى بها' },
 ];
 
 // صرامة التقييم: ثلاث درجات صريحة بدل شريطٍ متصل — أوضح للمتعلّم وأسهل للمقارنة.

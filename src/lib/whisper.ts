@@ -58,6 +58,21 @@ const ORT_WASM_CDN = [
   'https://unpkg.com/onnxruntime-web@1.20.1/dist/',
 ];
 
+/**
+ * ترميز أوزان النموذج (dtype) — والمرمِّزُ خاصّةً.
+ *
+ * كان يُحمَّل بـ`'q8'` للمكوّنات كلها، ومنها **المرمِّز الصوتي**: وتكميمُه إلى
+ * ثمانية أبتات يُفسد تمثيلَ الصوت في ويسبر فيُخرج المفكِّكُ نصًّا فارغًا لتلاوةٍ
+ * سليمة — وهو ما كان يُغلق بوّابة النصّ على القارئ المتقن. فيُقدَّم المرمِّزُ
+ * بدقّته الكاملة (وهو الوصف المعروف: مرمِّزٌ fp32 ومفكِّكٌ مكمَّم)، ويبقى
+ * الترميزُ القديم آخرَ ما يُجرَّب لئلّا يتعذّر التحميل على جهازٍ ضيّق.
+ */
+const DTYPES: unknown[] = [
+  { encoder_model: 'fp32', decoder_model_merged: 'q8' },
+  { encoder_model: 'fp32', decoder_model_merged: 'fp32' },
+  'q8',
+];
+
 export function whisperLoadedSize(): ModelSize | null {
   return bundle?.size ?? null;
 }
@@ -87,17 +102,19 @@ export function loadWhisper(
     };
     let lastErr: unknown = null;
     for (const wasmPaths of ORT_WASM_CDN) {
-      try {
-        tf.env.backends.onnx.wasm.wasmPaths = wasmPaths;
-        const processor = await tf.AutoProcessor.from_pretrained(id, cb);
-        const model = await tf.AutoModelForSpeechSeq2Seq.from_pretrained(id, {
-          dtype: 'q8',
-          progress_callback: cb,
-        });
-        bundle = { model, processor, size };
-        return bundle;
-      } catch (err) {
-        lastErr = err; // try next CDN
+      for (const dtype of DTYPES) {
+        try {
+          tf.env.backends.onnx.wasm.wasmPaths = wasmPaths;
+          const processor = await tf.AutoProcessor.from_pretrained(id, cb);
+          const model = await tf.AutoModelForSpeechSeq2Seq.from_pretrained(id, {
+            dtype,
+            progress_callback: cb,
+          });
+          bundle = { model, processor, size };
+          return bundle;
+        } catch (err) {
+          lastErr = err; // جرّب ترميزًا آخر ثم مرآةً أخرى
+        }
       }
     }
     if (lastErr) console.warn('[tajweed] model load failed:', lastErr);
