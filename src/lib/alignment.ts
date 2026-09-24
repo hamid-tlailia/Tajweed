@@ -7,6 +7,7 @@
 
 import { energyEnvelope } from './audio';
 import { buildCoach } from './coach';
+import { ayahLabel, classifyUtterance, loadCorpus, utteranceTokens } from './corpus';
 import { editClose, normalizeForMatch, scoreTranscriptMatch, textCheckOf } from './match';
 import type { TranscriptScore } from './match';
 import { BASMALA_WORDS, startsWithBasmalaWords, targetTextOf } from './quran';
@@ -92,6 +93,9 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   let scored: TranscriptScore | null = null;
   /** كلمات الآية التي لم تتبيّن في المسموع ولا ما يشبهها (لتُذكر في الخلاصة) */
   let textMissing: { word: string; heard?: string }[] = [];
+  /** ماذا يشبه المسموع بمطابقة المصحف كلّه: الآية / آية أخرى / كلام عادي */
+  let textKind: AlignmentResult['textKind'];
+  let heardOf: AlignmentResult['heardOf'];
 
   if (!input.demo && !opts.fast) {
     try {
@@ -122,6 +126,27 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
           words = [...prefix, ...ayahWords];
           tjs = analyzeTargetWords(words, opts.riwayah, tempo);
           prefixCount = prefix.length;
+        }
+      }
+
+      // ماذا يشبه المسموع؟ يُقاس إلى المصحف كلّه (لا الآية وحدها) فيُقال
+      // للقارئ: قرأت آيةً أخرى (وتُسمّى له)، أو ما سُمع كلامًا عاديًّا.
+      if (!sc.empty) {
+        try {
+          const corpus = await loadCorpus();
+          const [sidStr, scopeStr, ayahStr] = opts.target.key.split(':');
+          const sid = Number(sidStr);
+          const ident = classifyUtterance(corpus, utteranceTokens(transcript), targetTextOf(opts.target), {
+            targetMatch: sc.match,
+            isTarget: (s, a) => s === sid && (scopeStr === 'all' || a === Number(ayahStr)),
+          });
+          textKind = ident.kind;
+          if (ident.kind === 'quran' && ident.best) {
+            heardOf = { ...ident.best };
+            hooks.stage(`المسموع يشبه ${ayahLabel(heardOf)}…`);
+          }
+        } catch (e) {
+          console.warn('[TAHQIQQ] corpus identification unavailable:', e);
         }
       }
 
@@ -248,6 +273,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     recall: textRecall,
     precision: textPrecision,
     missing: textMissing,
+    kind: textKind,
+    heardOf,
   });
 
   return {
@@ -261,6 +288,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     textCheck,
     textRecall,
     textPrecision,
+    textKind,
+    heardOf,
     overallScore,
     verdict: verdictFor(overallScore),
     durationMs,
@@ -341,10 +370,20 @@ export function computeWordSpans(
 
   for (let i = 0; i < midsMs.length; i++) {
     const midF = frameOf(midsMs[i]);
-    // search window: towards the neighbouring midpoints, widened by the prior
+    // search window: towards the neighbouring midpoints, widened by the prior.
+    // الكلمة الأخيرة تُوسَّع إلى نهاية التسجيل: فالمدّ الممسوك عند الوقف
+    // (عارض/لازم) قد يُشبع فوق المقدار الاسمي، ولا جارة بعدها تحدّه — فلا
+    // يُقطع القياس عند ١٫٢× المتوقع فيُحكم «ناقصًا» رغم الإشباع.
     const priorHalf = Math.max(4, Math.round((expectedMs[i] * 1.2) / frameMs));
+    const lastPad = Math.max(priorHalf, Math.round((expectedMs[i] * 3.5) / frameMs));
     const lo = Math.max(0, Math.min(i > 0 ? frameOf(midsMs[i - 1]) : 0, midF - priorHalf));
-    const hi = Math.min(n - 1, Math.max(i < midsMs.length - 1 ? frameOf(midsMs[i + 1]) : n - 1, midF + priorHalf));
+    const hi = Math.min(
+      n - 1,
+      Math.max(
+        i < midsMs.length - 1 ? frameOf(midsMs[i + 1]) : n - 1,
+        midF + (i === midsMs.length - 1 ? lastPad : priorHalf),
+      ),
+    );
 
     // walk back to the last frame above threshold, tolerating short dips
     let s = midF;

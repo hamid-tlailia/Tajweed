@@ -88,6 +88,16 @@ export interface LiveTextCheck {
   precision: number;
   /** آخر نصٍّ سُمع (للعرض) */
   text: string;
+  /**
+   * ماذا يشبه المسموع؟ (من مطابقة المصحف كلّه)
+   *   target  نصّ الآية المختارة
+   *   quran   آيةٌ أخرى (تُذكر في otherLabel)
+   *   speech  كلامٌ عاديٌّ ليس من القرآن
+   *   unknown غير بيّن
+   */
+  kind?: 'target' | 'quran' | 'speech' | 'unknown';
+  /** إن كان آيةً أخرى: مسماها («سورة الفاتحة — الآية ٥») */
+  otherLabel?: string;
 }
 
 /** مقارنة كلمة من تلاوة المستخدم بنظيرتها عند القارئ المعتمد */
@@ -216,6 +226,16 @@ export interface AlignmentResult {
   /** نسبة كلمات الآية التي سُمعت / نسبة المسموع الذي من الآية (عند السماع بالألفاظ) */
   textRecall?: number;
   textPrecision?: number;
+  /**
+   * ماذا يشبه المسموع؟ (بمطابقة المصحف كلّه، لا الآية وحدها)
+   *   target  نصّ الآية المختارة
+   *   quran   آيةٌ أخرى — تُذكر في heardOf
+   *   speech  كلامٌ عاديٌّ ليس من القرآن
+   *   unknown غير بيّن (لم يُسمع بالألفاظ، أو التبس الأمر)
+   */
+  textKind?: 'target' | 'quran' | 'speech' | 'unknown';
+  /** أقرب آيةٍ أخرى إلى المسموع إن كان «آيةً أخرى» */
+  heardOf?: { surahId: number; surahName: string; ayah: number; match: number };
   overallScore: number; // 0..100
   verdict: string;
   durationMs: number;

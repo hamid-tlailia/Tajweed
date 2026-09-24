@@ -73,15 +73,21 @@ const TAU_SLOW = 110;
 /** الاستدامة: فوق هذه النسبة من الذروة يُعدّ الصوت ممسوكًا (مدًّا) لا مقاطع */
 const STEADY_RATIO = 0.75;
 const STEADY_SHARE = 0.7;
-/** إشارة تقديرية بعد هذه النسبة من مقدار الكلمة الجاري (بلا إشارة صوتية) */
-const MODEL_FORCE = 1.8;
+/**
+ * إشارة تقديرية بعد هذه النسبة من مقدار الكلمة الجاري (بلا إشارة صوتية).
+ *
+ * رُفعت من ١٫٨ إلى ٢٫٦: الإشارة التقديرية تُقدِّم المطابقةَ كلمةً، والضوء
+ * المعروض لا يتبعها مباشرةً (المؤشّر مربوطٌ بـ committed — انظر snapshot)،
+ * فلا يسبق القارئ. والحدّ الحقيقي (سكتةٌ أو انخفاضٌ يعقبه صعود) أوثق منها.
+ */
+const MODEL_FORCE = 2.6;
 /** وإشارة تقديرية قسرية للمدّ الممسوك بعد هذه النسبة (م.ث إضافية) */
 const MODEL_HARD = 2.6;
 const MODEL_HARD_ADD = 700;
 /** لا تُسجَّل إشارتان أقرب من هذا (م.ث من الزمن المصوّت) */
 const CUE_DEDUPE_V = 45;
 /** أدنى ذيلٍ صوتي عند الإيقاف يُعدّ كلمة (دونه لا تُختلق كلمة) */
-const TAIL_MIN_MS = 120;
+const TAIL_MIN_MS = 90;
 
 /* ------------------------------------------------------------------ */
 /* معاملات المطابقة (البرمجة الدينامية)                               */
@@ -243,7 +249,15 @@ export class LiveTajweedTracker {
   private envSlow = 0;
   private peakEnv = 0;
   private dipMs = 0;
-  private dipStartV = 0;
+  /** قاع الانخفاض الجاري: زمنُه المصوّت ومستواه — منه تُصنع إشارة الحدّ */
+  private dipTroughV = 0;
+  private dipTroughE = Infinity;
+  /**
+   * انخفاضٌ تأكد هبوطُه وينتظر **صعود الصوت من جديد** ليُعدّ حدّ كلمة:
+   * فالانخفاض وحده قد يكون ذُبولَ مدٍّ في آخر الكلمة (صوتٌ يخفت ولا ينقطع) —
+   * فإن خفت الصوت حتى الصمت كانت السكتةُ هي الحدّ، لا الانخفاض.
+   */
+  private pendingDip: { v: number; depth: number } | null = null;
   private steadyMs = 0;
   private floorEma = 0.0045;
 
@@ -341,35 +355,64 @@ export class LiveTajweedTracker {
       if (this.envFast > this.peakEnv) this.peakEnv = this.envFast;
       if (this.envSlow > this.peakEnv * STEADY_RATIO) this.steadyMs += dt;
 
-      // إشارة الانخفاض: حرفُ الكلمة التالية يخفض الطاقة خفضًا بيّنًا
+      // إشارة الانخفاض: حرفُ الكلمة التالية يخفض الطاقة خفضًا بيّنًا — لكن
+      // الانخفاض وحده ليس حدًّا: المدُّ الممسوك في آخر الكلمة يذبل صوته دون
+      // ٥٥٪ من ذروته فيُحسب انخفاضًا ويُنقص قياسُه (وهو ما كان يحكم الكلمة
+      // الأخيرة «ناقصة المدّ» رغم إشباعها). لذلك يُنتظر **صعودُ الصوت من
+      // جديد** (ابتداءُ الكلمة التالية) قبل أن يُعدّ الحدّ، وتُوضع الإشارة عند
+      // قاع الانخفاض بينهما. فإن ذهب الصوت إلى صمتٍ كانت إشارتُه (السكتة) هي
+      // الحدّ وأُلغي الانخفاض المعلَّق.
       const dipThr = Math.max(thr * 1.3, this.peakEnv * DIP_RATIO);
       if (this.envFast < dipThr && this.peakEnv > thr * DIP_MIN_PEAK) {
-        if (this.dipMs === 0) this.dipStartV = Math.max(0, this.voicedTotal - dt);
         this.dipMs += dt;
-        if (this.dipMs >= DIP_CONFIRM_MS) {
-          const depth = clamp(1 - this.envFast / Math.max(1e-6, this.peakEnv), 0, 1);
-          this.pushCue('dip', this.dipStartV, depth, tMs);
+        if (this.envFast < this.dipTroughE) {
+          this.dipTroughE = this.envFast;
+          this.dipTroughV = this.voicedTotal;
+        }
+        if (this.dipMs >= DIP_CONFIRM_MS && !this.pendingDip) {
+          const depth = clamp(1 - this.dipTroughE / Math.max(1e-6, this.peakEnv), 0, 1);
+          this.pendingDip = { v: this.dipTroughV, depth };
         }
       } else if (this.envFast >= dipThr) {
+        // صعود الصوت بعد انخفاضٍ مؤكَّد = حدّ كلمةٍ حقيقي بين الكلمتين
+        if (this.pendingDip) {
+          const pd = this.pendingDip;
+          this.pendingDip = null;
+          this.pushCue('dip', pd.v, pd.depth, tMs);
+        }
         this.dipMs = 0;
+        this.dipTroughE = Infinity;
       }
 
-      // إشارة تقديرية: مضى من الصوت ما يجاوز مقدار الكلمة الجاري بلا حدٍّ مسموع.
-      // ولا يُقطع على مدٍّ ممسوك (صوتٍ مستديم) — فيُنتظر حدُّه الحقيقي.
+      // إشارة تقديرية: مضى من الصوت ما يجاوز مقدار الكلمة الجاري بلا حدٍّ
+      // مسموع. وهي أضعف الإشارات — لا تُستعمل إلا حيث لا سكتةَ ولا انخفاض:
+      //   • لا يُقطع على مدٍّ ممسوك (صوتٍ مستديم) — يُنتظر حدُّه الحقيقي.
+      //   • حدُّها مبنيٌّ على **أعلى الأوجه الجائزة** للكلمة (لا وسطها): فمن
+      //     أشبع المدَّ ستَّ حركاتٍ لم يُقطع عليه عند حركتين ونصف.
+      //   • والضوء المعروض لا يتقدّم عليها: المؤشّر مربوطٌ بـ committed.
       const fi = this.frontierIdx();
       if (fi < this.tjs.length) {
         const since = this.voicedTotal - this.lastCueV();
         const exp = this.expectedOf(fi);
+        const faceMax = Math.max(exp, this.windowOf(fi).maxMs);
         const steadyHold = since > exp * 0.6 && this.steadyMs > since * STEADY_SHARE;
-        const lim = steadyHold ? exp * MODEL_HARD + MODEL_HARD_ADD : exp * MODEL_FORCE;
+        const lim = steadyHold
+          ? Math.max(exp * MODEL_HARD + MODEL_HARD_ADD, faceMax * 2.2 + 1500)
+          : Math.max(exp * MODEL_FORCE, faceMax * 1.35 + 400);
         if (since > lim) this.pushCue('model', this.voicedTotal, 0, tMs, steadyHold);
       }
     } else {
       this.silenceMs += dt;
       this.dipMs = 0;
+      this.dipTroughE = Infinity;
+      // انخفاضٌ معلَّق دخل الصمت: السكتةُ القصيرة (دون عتبة إشارة السكتة) لا
+      // تُلغيه — فإن عاد الصوت ارتفعَ وأكّده حدًّا، وإن اكتملت السكتةُ كانت
+      // إشارتُها هي الحدّ وأُلغي. ويُقدَّم موضعُه إلى آخر الصوت المصوّت.
+      if (this.pendingDip) this.pendingDip.v = this.voicedTotal;
       // إشارة السكتة: أقصرُ من مهلة الإصدار الأول بخمس مرات
       if (this.started && this.silenceMs >= GAP_CUE_MS && !this.gapCuePushed) {
         this.gapCuePushed = true;
+        this.pendingDip = null; // السكتةُ أدلّ على الحدّ من الانخفاض
         this.pushCue('gap', this.voicedTotal, clamp(this.silenceMs / 200, 0, 1), tMs);
       } else if (this.gapCuePushed) {
         // تمتدّ السكتة: يزداد وزنُ إشارتها (سكتةٌ طويلة = حدُّ كلمةٍ أرجح)
@@ -602,13 +645,17 @@ export class LiveTajweedTracker {
     return committedNow;
   }
 
-  /** وسم ما بعد الجبهة «جاريًا» (حتى يُبتّ فيه) */
+  /**
+   * وسم الكلمة الجارية وحدها «جاريًا» — لا كل ما أُسند ولم يُبتّ: فالكلمات
+   * المُسندة بانتظار التريّث ما زالت «قادمة»، ولا تُضاء قبل أن يصل إليها
+   * القارئ. (كان وسمُها جميعًا يجعل الضوء يسبق القارئ كلمةً أو أكثر.)
+   */
   private markCurrent(): void {
     const n = this.tjs.length;
-    for (let q = this.committed; q < this.committed + this.pendingAssigned && q < n; q++) {
-      if (this.results[q].status === 'pending') this.results[q] = { status: 'current', measuredMs: 0 };
+    for (let q = this.committed + 1; q < n; q++) {
+      if (this.results[q].status === 'current') this.results[q] = { status: 'pending', measuredMs: 0 };
     }
-    if (this.committed < n && this.results[this.committed].status === 'pending') {
+    if (this.committed < n && (this.results[this.committed].status === 'pending' || this.results[this.committed].status === 'current')) {
       this.results[this.committed] = { status: 'current', measuredMs: 0 };
     }
   }
@@ -882,6 +929,9 @@ export class LiveTajweedTracker {
     this.lastCommitV = 0;
     this.commitCueIdx = -1;
     this.pendingAssigned = 0;
+    this.pendingDip = null;
+    this.dipMs = 0;
+    this.dipTroughE = Infinity;
     this.lastAlert = null;
     this.lastBoundary = null;
     // إعادة المطابقة على ما تجمّع من إشارات (بلا تنبيهات: أحكامٌ أُعيد بناؤها)
@@ -1042,18 +1092,24 @@ export class LiveTajweedTracker {
   snapshot(): LiveSnapshot {
     const n = this.tjs.length;
     const P = this.prefixCount;
-    const fi = this.frontierIdx();
-    const idx = clamp(fi, 0, Math.max(0, n - 1));
-    const win = this.windowOf(idx);
+    /**
+     * المؤشر = الكلمة الجاري قراءتها فعلًا (أول غير مُبتَّتة)، لا جبهة
+     * البرمجة الدينامية: فالجبهة قد تتقدّم بكلماتٍ أُسندت ولم تُبتّ بعد
+     * (تريّث COMMIT_LAG)، وكان ذلك يجعل الضوء يسبق القارئ كلمةً أو أكثر.
+     * زمنُ الكلمة الجارية يُقاس من آخر حدٍّ مُبتَّت (lastCommitV) لا من
+     * آخر إشارةٍ قد تكون تقديريةً متقدّمة.
+     */
+    const cur = clamp(this.committed, 0, Math.max(0, n - 1));
+    const win = this.windowOf(cur);
     const stalled = this.started && !this.finished && this.lastVoiceT ? this.lastT - this.lastVoiceT : 0;
-    const inPrefix = fi < P && this.started && !this.finished;
-    const inWord = fi < n && fi >= P && this.started && !this.finished;
-    const curV = this.voicedTotal - this.lastCueV();
+    const inPrefix = this.committed < P && this.started && !this.finished;
+    const inWord = this.committed < n && this.committed >= P && this.started && !this.finished && !this.frozen;
+    const curV = this.voicedTotal - this.lastCommitV;
     // العدّادات لكلمات الآية وحدها (لا البادئة)
     const vis = this.results.slice(P);
     const judged = (st: LiveWordStatus) => st !== 'pending' && st !== 'current';
     return {
-      cursor: fi - P,
+      cursor: this.committed - P,
       started: this.started,
       doneCount: vis.filter((r) => judged(r.status)).length,
       okCount: vis.filter((r) => r.status === 'ok' || r.status === 'excellent').length,
@@ -1061,10 +1117,10 @@ export class LiveTajweedTracker {
       estimatedCount: vis.filter((r) => r.boundary === 'model' && judged(r.status)).length,
       words: vis.map((r) => ({ ...r })),
       currentVoicedMs: inWord ? Math.max(0, Math.round(curV)) : 0,
-      currentExpectedMs: inWord ? this.expectedOf(idx) : 0,
+      currentExpectedMs: inWord ? this.expectedOf(cur) : 0,
       currentMinMs: inWord ? win.minMs : 0,
       currentMaxMs: inWord ? win.maxMs : 0,
-      currentHarakat: inWord ? (this.tjs[idx]?.harakat ?? 0) : 0,
+      currentHarakat: inWord ? (this.tjs[cur]?.harakat ?? 0) : 0,
       stalledMs: Math.max(0, Math.round(stalled)),
       lastAlert: this.lastAlert && this.lastAlert.index >= P ? { ...this.lastAlert, index: this.lastAlert.index - P } : null,
       lastBoundary: this.lastBoundary,

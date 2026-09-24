@@ -3,6 +3,7 @@
 // لا يكفي وسم «أقصر من المطلوب»؛ المتعلّم يحتاج جملةً واحدةً لكل مخالفة
 // تربط الحكم (مد/غنة/قلقلة…) بفعلٍ واضح.
 
+import { ayahLabel } from './corpus';
 import { stripTashkeel } from './tajweed';
 import type { CoachTip, TextCheck, WordAlignment, WordStatus } from './types';
 import { PASS_SCORE } from './types';
@@ -110,6 +111,10 @@ export interface TextGateInfo {
   precision?: number;
   /** كلمات الآية التي لم تتبيّن في المسموع ولا ما يشبهها (مع ما سُمع بدلها إن سُمع) */
   missing?: { word: string; heard?: string }[];
+  /** ماذا يشبه المسموع بمطابقة المصحف كلّه: الآية / آية أخرى / كلام عادي */
+  kind?: 'target' | 'quran' | 'speech' | 'unknown';
+  /** أقرب آيةٍ أخرى إن كان المسموع آيةً غيرها */
+  heardOf?: { surahId: number; surahName: string; ayah: number; match: number };
 }
 
 /** «الفلق» (سُمع بدلها «الناس») */
@@ -123,6 +128,8 @@ function missingList(missing: { word: string; heard?: string }[], max = 3): stri
 /**
  * جملة بوّابة النصّ للخلاصة — لماذا لم يُعتمد النصّ، وماذا يفعل القارئ.
  * تُميّز بين: كلامٍ آخر، وآيةٍ أخرى/زيادةٍ عليها، وبعض الآية، وسماعٍ لم يجرِ.
+ * وبمطابقة المصحف كلّه تُسمّى الآيةُ الأخرى إن كان المسموع إيّاها، ويُقال
+ * صراحةً إن كان المسموع كلامًا عاديًّا ليس من القرآن.
  */
 export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: number): string | null {
   const pct = Math.round(transcriptMatch * 100);
@@ -130,6 +137,20 @@ export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: 
   const precision = info.precision ?? 0;
   const heard = Math.round(recall * n);
   const missing = info.missing ?? [];
+  // المقروء آيةٌ أخرى سمّاها السماع — لا حاجة إلى التفصيل العام
+  if ((info.textCheck === 'mismatch' || info.textCheck === 'weak') && info.kind === 'quran' && info.heardOf) {
+    const m = Math.round(info.heardOf.match * 100);
+    return (
+      `المقروء ليس نصَّ هذه الآية — بل يُشبه ${ayahLabel(info.heardOf)} (تشابهٌ ${m}٪). ` +
+      'إن كنت تقرؤها فاخترها من تبويب التمرين، وإلا فاقرأ الآية المختارة كما في المصحف.'
+    );
+  }
+  if (info.textCheck === 'mismatch' && info.kind === 'speech') {
+    return (
+      `ما سُمع كلامٌ عاديٌّ ليس من القرآن (تطابق ${pct}٪) — والأزمنة لا تُحتسب لغير تلاوة. ` +
+      'اقرأ الآية المختارة كما في المصحف بصوتٍ واضح.'
+    );
+  }
   switch (info.textCheck) {
     case 'ok':
     case 'demo':

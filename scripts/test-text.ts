@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { runAlignment } from '../src/lib/alignment';
 import { buildCoach } from '../src/lib/coach';
+import { buildCorpus, classifyUtterance, utteranceTokens } from '../src/lib/corpus';
 import { normalizeForMatch, scoreTranscriptMatch, textCheckOf, TEXT_GATE_OK } from '../src/lib/match';
 import { buildTarget, targetTextOf, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords, normalizeArabic } from '../src/lib/tajweed';
@@ -164,7 +165,62 @@ console.log('\n════════ 4) الخلاصة والاجتياز ي�
   check('العرض التجريبي يجتاز', demo.passed);
 }
 
-console.log('\n════════ 5) الخطّ الكامل: التقييم اللحظي لا يُجيز، والعرض التجريبي يُجيز ════════');
+console.log('\n════════ 5) تمييز المسموع: الآية / آية أخرى / كلام عادي ════════');
+{
+  const corpus = buildCorpus(quran);
+  check('فهرس المصحف يغطي ٦٢٣٦ آية', corpus.ayahs.length === 6236, `${corpus.ayahs.length}`);
+
+  // نصّ الآية نفسها → «هذه الآية»
+  const fatiha5 = ayahText(1, 5);
+  const same = classifyUtterance(corpus, utteranceTokens(normalizeForMatch(fatiha5)), fatiha5, {
+    isTarget: (s, a) => s === 1 && a === 5,
+  });
+  check('قراءة الآية نفسها تُنسب إليها', same.kind === 'target', `${same.kind} (${pct(same.targetMatch)})`);
+
+  // آيةٌ أخرى من سورةٍ أخرى → تُسمّى
+  const falaq1 = ayahText(113, 1); // قُلۡ أَعُوذُ بِرَبِّ ٱلۡفَلَقِ
+  const other = classifyUtterance(corpus, utteranceTokens(normalizeForMatch(ayahText(114, 1))), falaq1, {
+    isTarget: (s, a) => s === 113 && a === 1,
+  });
+  check('قراءة آيةٍ أخرى تُكشف «آيةً أخرى»', other.kind === 'quran', `${other.kind}`);
+  check('…وتُسمّى سورتُها ورقمُها', other.best?.surahId === 114 && other.best?.ayah === 1, JSON.stringify(other.best ?? null));
+
+  // كلامٌ عادي → لا آية ولا قرآن (شكوى «تفاحة بدل الم»)
+  const speech = classifyUtterance(corpus, utteranceTokens('أكلت تفاحة حمراء لذيذة اليوم'), ayahText(2, 1), {
+    isTarget: (s, a) => s === 2 && a === 1,
+  });
+  check('الكلام العادي يُكشف كلامًا لا قرآنًا', speech.kind === 'speech', `${speech.kind} (${pct(speech.targetMatch)})`);
+
+  // كلمةٌ واحدة بدل كلمة: «تفاحة» بدل «الم» — لا تمرّ صحيحة
+  const oneWord = classifyUtterance(corpus, utteranceTokens('تفاحة'), ayahText(2, 1), {
+    isTarget: (s, a) => s === 2 && a === 1,
+  });
+  check('كلمة «تفاحة» بدل «الم» لا تُحسب من الآية', oneWord.kind === 'speech', `${oneWord.kind}`);
+
+  // البسملة قبل آيةٍ ليست البسملة: آيةٌ أخرى (الفاتحة ١) لا كلامٌ عادي
+  const bas = classifyUtterance(corpus, utteranceTokens('بسم الله الرحمن الرحيم'), ayahText(2, 255), {
+    isTarget: (s, a) => s === 2 && a === 255,
+  });
+  check('البسملة قبل آيةٍ أخرى تُكشف آيةً (الفاتحة ١)', bas.kind === 'quran' && bas.best?.surahId === 1, JSON.stringify(bas.best ?? null));
+
+  // الخلاصة تُسمّي الآية الأخرى والكلام العادي
+  const perWordLike = (tc: 'weak' | 'mismatch') =>
+    buildCoach([], 90, 0.1, 'transcript', 1, { textCheck: tc, recall: 0.1, precision: 0.1, kind: 'quran', heardOf: { surahId: 114, surahName: 'الفلق', ayah: 1, match: 0.9 } });
+  check('الخلاصة تُسمّي الآية الأخرى', /سورة الفلق/.test(perWordLike('mismatch').summary), perWordLike('mismatch').summary.slice(0, 90));
+  const speechCoach = buildCoach([], 90, 0.05, 'transcript', 1, { textCheck: 'mismatch', recall: 0, precision: 0, kind: 'speech' });
+  check('الخلاصة تُصرّح بالكلام العادي', /كلامٌ عادي/.test(speechCoach.summary), speechCoach.summary.slice(0, 90));
+
+  // الأداء: التصنيف على المصحف كله أسرع من زمن السماع نفسه
+  const t0 = Date.now();
+  for (let i = 0; i < 5; i++) {
+    classifyUtterance(corpus, utteranceTokens(normalizeForMatch(ayahText(36, i + 1))), ayahText(36, 40), {
+      isTarget: (s, a) => s === 36 && a === 40,
+    });
+  }
+  check('التصنيف خمس مرات دون نصف ثانية', Date.now() - t0 < 500, `${Date.now() - t0} م.ث`);
+}
+
+console.log('\n════════ 6) الخطّ الكامل: التقييم اللحظي لا يُجيز، والعرض التجريبي يُجيز ════════');
 async function pipeline() {
   const data = surah(1);
   const target = buildTarget(data, 'ayah', 3);

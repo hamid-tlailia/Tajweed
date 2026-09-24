@@ -5,6 +5,7 @@ import { energyEnvelope } from '@/lib/audio';
 import { resultPulse, wordViolation } from '@/lib/haptics';
 import { HARAKA_MS, TAJWEED_SOURCES, TEMPO_META, timingTraceAt } from '@/lib/tajweed';
 import { PASS_SCORE } from '@/lib/types';
+import { ayahLabel } from '@/lib/corpus';
 import { TEXT_GATE_OK } from '@/lib/match';
 import { fmtSec, fmtTime, waveThemeColors } from '@/lib/util';
 import { useTahqiq } from '@/store';
@@ -47,7 +48,6 @@ function cardTone(status: string, active: boolean): string {
 export default function AlignmentConsole() {
   const result = useTahqiq((s) => s.result);
   const processing = useTahqiq((s) => s.processing);
-  const refining = useTahqiq((s) => s.refining);
   const stage = useTahqiq((s) => s.stage);
   const activeWord = useTahqiq((s) => s.activeWord);
   const setActiveWord = useTahqiq((s) => s.setActiveWord);
@@ -251,13 +251,27 @@ export default function AlignmentConsole() {
       : textCheck === 'demo'
         ? 'محاكاة للتجربة — بلا ميكروفون'
         : textCheck === 'mismatch'
-          ? 'ما سُمع ليس نصَّ هذه الآية'
+          ? result.textKind === 'quran' && result.heardOf
+            ? `المقروء آيةٌ أخرى: ${ayahLabel(result.heardOf)}`
+            : result.textKind === 'speech'
+              ? 'ما سُمع كلامٌ عاديٌّ ليس من القرآن'
+              : 'ما سُمع ليس نصَّ هذه الآية'
           : textCheck === 'weak'
-            ? 'تبيّن بعضُ نصّ الآية فقط'
+            ? result.textKind === 'quran' && result.heardOf
+              ? `المقروء يُشبه آيةً أخرى: ${ayahLabel(result.heardOf)}`
+              : 'تبيّن بعضُ نصّ الآية فقط'
             : 'تبيّن نصّ الآية في تلاوتك';
   const matchTone: 'mint' | 'gold' | 'warn' | 'slate' =
     textCheck === 'unverified' ? 'slate' : textOk ? (matchPct >= 70 ? 'mint' : 'gold') : 'warn';
   /** عنوان بطاقة الاجتياز: يُصرَّح بسبب عدم الاجتياز إن كان النصّ */
+  const textFailTitle =
+    result.textKind === 'speech'
+      ? 'لم تُجتز — المقروء كلامٌ عاديٌّ ليس من القرآن'
+      : result.textKind === 'quran' && result.heardOf
+        ? `لم تُجتز — المقروء آيةٌ أخرى (${ayahLabel(result.heardOf)})`
+        : textCheck === 'weak'
+          ? 'لم تُجتز — لم يتبيّن نصّ الآية كاملًا'
+          : 'لم تُجتز — المقروء ليس نصَّ الآية';
   const passTitle = result.reciter
     ? result.passed
       ? 'اجتزت الآية بمطابقة القارئ المعتمد'
@@ -265,16 +279,14 @@ export default function AlignmentConsole() {
         ? 'لم تبلغ مطابقة القارئ حدّ الاجتياز'
         : textCheck === 'unverified'
           ? 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
-          : 'لم تُجتز — المقروء ليس نصَّ الآية'
+          : textFailTitle
     : result.passed
       ? 'اجتزت الآية'
       : textOk
         ? 'لم تُجتز بعد'
         : textCheck === 'unverified'
           ? 'نتيجةٌ أوّلية — لم يُتحقَّق من النصّ بعد'
-          : textCheck === 'weak'
-            ? 'لم تُجتز — لم يتبيّن نصّ الآية كاملًا'
-            : 'لم تُجتز — المقروء ليس نصَّ الآية';
+          : textFailTitle;
 
   const glossary = (() => {
     const seen = new Map<string, { label: string; note: string }>();
@@ -309,17 +321,11 @@ export default function AlignmentConsole() {
             {result.instant ? (
               <p className="mt-2 flex items-center gap-2 rounded-lg border border-gold-500/40 bg-gold-500/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-gold-200">
                 <span aria-hidden>⚡</span>
-                {refining ? (
-                  <span>
-                    هذه <b>نتيجةٌ لحظية</b> قِيست من أزمنة صوتك فور إيقاف التسجيل — ويُستكمَل الآن التحليلُ الأدقّ
-                    بالسماع الذكي في الخلفية، وتُستبدل النتيجةُ به متى انتهى.
-                  </span>
-                ) : (
-                  <span>
-                    هذه <b>نتيجةٌ لحظية</b> قِيست من أزمنة صوتك وحده (بلا سماع ذكي) — ولا يُعتمد بها الاجتياز حتى يتحقّق
-                    السماع الذكي من أنّ المقروء هو الآية. جهّزه من «الإعدادات» أو اضغط «إعادة تقييم».
-                  </span>
-                )}
+                <span>
+                  هذه <b>نتيجةٌ لحظية</b> قِيست من أزمنة صوتك وحده (بلا سماع ذكي) — ولا يُعتمد بها الاجتياز حتى يتحقّق
+                  السماع الذكي من أنّ المقروء هو الآية. جهّز السماع من «الإعدادات» ثم اضغط «إعادة تقييم آخر تسجيل»
+                  لتحصل على النتيجة المعتمدة (نتيجةٌ واحدة، لا تتبدّل بعدها).
+                </span>
               </p>
             ) : null}
           </div>

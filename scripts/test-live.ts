@@ -1,6 +1,6 @@
 // TAHQĪQ — اختبار المرافقة الحية: تتبّع الكلمات من تيار طاقة محاكى
 import { LiveTajweedTracker } from '../src/lib/live';
-import { analyzeWords } from '../src/lib/tajweed';
+import { analyzeTargetWords, analyzeWords } from '../src/lib/tajweed';
 import type { WordStatus } from '../src/lib/types';
 
 let fails = 0;
@@ -342,6 +342,67 @@ console.log('\n──── المدّ الممسوك ────');
   );
   check('عدّاد الآية لا يشمل البسملة', sn.doneCount === 4 && sn.okCount === 4, `${sn.doneCount}/${sn.okCount}`);
   check('أحداث الآية بفهارسها (٠..٣) والبسملة موسومة prefix', ev.some((e) => e.prefix) && ev.filter((e) => !e.prefix).every((e) => e.index >= 0 && e.index < 4), JSON.stringify(ev.slice(-4)));
+}
+
+/* ================================================================== */
+/* تراجعٌ كان يشكو منه القراء:                                          */
+/*  ١) الكلمة الأخيرة (مدُّها) تُحكم «ناقصة» رغم إشباعها — لأن ذبول    */
+/*     الصوت في آخر المدّ كان يُحسب حدًّا فيقطع قياسَه.                 */
+/*  ٢) الضوء يسبق القارئ بإشاراتٍ تقديرية قبل أن يتمّ الكلمة.          */
+/* ================================================================== */
+console.log('\n──── تراجعات: مدّ الكلمة الأخيرة وتقدّم الضوء ────');
+{
+  // كـ«ٱلرَّحۡمَـٰنِ ٱلرَّحِیمِ»: أمسك القارئ مدَّ الكلمة الأخيرة وأشبعه بصوتٍ
+  // يذبل تدريجيًّا (وهو الطبيعي في الأداء) ثم سكت
+  const W = ['ٱلرَّحۡمَـٰنِ', 'ٱلرَّحِیمِ'];
+  const wt = analyzeTargetWords(W.map((w) => ({ word: w, ayah: 1 })), 'hafs', 'tartil');
+  const ev: { index: number; status: WordStatus; measuredMs: number; measured: boolean }[] = [];
+  const trk = new LiveTajweedTracker(wt, W.map((w) => ({ word: w })), 0.8, (e) =>
+    ev.push({ index: e.index, status: e.status, measuredMs: e.measuredMs, measured: e.measured }),
+  );
+  let tt = 0;
+  const dt = 10;
+  const feed = (rms: number, ms: number) => {
+    for (let i = 0; i < Math.max(1, Math.round(ms / dt)); i++, tt += dt) trk.feed(rms, tt);
+  };
+  feed(0.0005, 300);
+  feed(0.4, Math.round(wt[0].expectedMs)); // الكلمة الأولى في مقدارها
+  feed(0.0005, 140); // سكتة بينهما
+  // الكلمة الأخيرة: مبتدأٌ ثم مدٌّ ممسوك يذبل من ٠٫٤ إلى ٠٫٠٦ على مدى الإمساك
+  const hold = Math.round(wt[1].expectedMs * 2.2);
+  feed(0.4, 150);
+  const steps = Math.max(1, Math.round(hold / dt));
+  for (let k = 0; k < steps; k++) feed(Math.max(0.05, 0.4 - 0.34 * (k / steps)), dt);
+  feed(0.0005, 500);
+  trk.finish();
+  const sn = trk.snapshot();
+  const lastEv = [...ev].reverse().find((e) => e.index === 1);
+  check('الكلمة الأخيرة: مدٌّ مُشبَع بصوتٍ ذابل لا يُحكم ناقصًا', sn.words[1].status !== 'short', `${sn.words[1].status} (${sn.words[1].measuredMs} م.ث)`);
+  check('الكلمة الأخيرة: قياسها يغطي الإمساك الحقيقي (−٢٥٪ فأقل)', !!lastEv && lastEv.measuredMs >= hold * 0.75, `${lastEv?.measuredMs} مقابل ${hold}`);
+  check('الكلمة الأخيرة حدُّها مقيس من الصوت (سكتةٌ بعد المدّ)', !!lastEv && lastEv.measured, `${lastEv ? 'مقيس' : 'تقدير'}`);
+}
+{
+  // ضوء المرافقة لا يسبق القارئ: صوتٌ متصل يذبل بلا حدٍّ مسموع — لا يُقطع
+  // على القارئ بإشارةٍ تقديرية قبل أن يأتي حدٌّ حقيقي
+  const W = ['ٱلۡحَمۡدُ', 'لِلَّهِ', 'رَبِّ', 'ٱلۡعَـٰلَمِينَ'];
+  const wt = analyzeWords(W, 'hafs', 'tartil');
+  const trk = new LiveTajweedTracker(wt, W.map((w) => ({ word: w })), 0.8);
+  let tt = 0;
+  const dt = 10;
+  const feed = (rms: number, ms: number) => {
+    for (let i = 0; i < Math.max(1, Math.round(ms / dt)); i++, tt += dt) trk.feed(rms, tt);
+  };
+  feed(0.0005, 300);
+  // صوتٌ يهبط درجًا درجًا (كمدٍّ يذبل) فوق عتبة الصوت — بلا صعودٍ ولا سكتة
+  const dur = Math.round(wt[0].expectedMs * 2.4);
+  const steps = Math.max(1, Math.round(dur / dt));
+  for (let k = 0; k < steps; k++) feed(Math.max(0.05, 0.4 - 0.34 * (k / steps)), dt);
+  const mid = trk.snapshot();
+  check('لا يتقدّم الضوء على القارئ بلا حدٍّ حقيقي (عند ٢٫٤× مقدار الكلمة)', mid.doneCount === 0 && mid.cursor === 0, `منجز=${mid.doneCount} مؤشر=${mid.cursor}`);
+  feed(0.0005, 400);
+  trk.finish();
+  const sn = trk.snapshot();
+  check('عند الإيقاف تُقاس الكلمة بطولها كله ولا تُقطَّع', sn.words[0].measuredMs >= dur * 0.75 && sn.words.slice(1).every((w) => w.status === 'silent'), `${sn.words[0].measuredMs} م.ث`);
 }
 
 if (fails) {
