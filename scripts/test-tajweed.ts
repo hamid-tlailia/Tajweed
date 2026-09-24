@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import type { Riwayah } from '../src/lib/types.ts';
 import { scoreTranscriptMatch } from '../src/lib/match.ts';
-import { analyzeWord, analyzeWords, TEMPO_SCALE } from '../src/lib/tajweed.ts';
+import { analyzeWord, analyzeWords, timingTraceOf, TEMPO_SCALE } from '../src/lib/tajweed.ts';
 import { toNumberArray } from '../src/lib/whisper.ts';
 
 const quran: any = JSON.parse(readFileSync(new URL('../public/quran.json', import.meta.url)));
@@ -561,6 +561,76 @@ console.log('\\n════════ 16) مطابقة النصّ: حروف �
   check(empty.empty && empty.match === 0, 'نصّ لاتيني يُعدّ فارغًا عربيًّا');
   const close = scoreTranscriptMatch('من شر ما خالق', 'من شر ما خلق');
   check(close.match >= 0.7, 'كلمة قريبة لا تُسقط المطابقة', close.match.toFixed(2));
+}
+
+console.log('\n════════ 17) عدّ الحركات على الرسم العثماني: ما لا يُنطق لا يُحسب ════════');
+{
+  /** كلمةٌ في سياق آيتها (بروايةٍ معيّنة) — فالوصلُ والوقفُ من السياق */
+  const inAyah = (s: number, a: number, b: string, r: Riwayah = 'hafs'): R | null => {
+    const ws = wordsOf(s, a);
+    const rs = analyzeWords(ws, r);
+    const i = ws.findIndex((w) => bare(w) === b);
+    return i >= 0 ? rs[i] : null;
+  };
+  const hOf = (r: R | null) => (r ? r.harakat : -1);
+  const near = (r: R | null, h: number) => Math.abs(hOf(r) - h) < 0.011;
+
+  // 1) همزة الوصل: تُنطق مبتدأً بها، وتسقط بعد حرفٍ سابق (وَ/بِ/لِ/كَ/فَ) فلا تُحسب ساكنًا
+  const allahStart = inAyah(2, 255, 'الله'); // ٱللَّهُ — أوّل الآية
+  const allahWasl = inAyah(1, 1, 'الله'); // ٱللَّهِ — بعد «بِسۡمِ»
+  check(near(allahStart, 3.5), 'ٱللَّهُ مبتدأً بها: همزةُ الوصل حركةٌ كاملة', `${hOf(allahStart)} حركات`);
+  check(near(allahWasl, 2.5), 'ٱللَّهِ وصلًا: همزةُ الوصل تسقط فلا تُحسب', `${hOf(allahWasl)} حركات`);
+  const biHaqq = inAyah(2, 71, 'بالحق');
+  check(near(biHaqq, 4), 'بِٱلۡحَقِّ: لا نصفَ حركةٍ لألف الوصل (٤ حركات)', `${hOf(biHaqq)} حركات`);
+
+  // 2) ألفٌ خنجريةٌ اتُّخذت كُرسيًّا للهمزة: ليست مدًّا (فَٱدَّٰرَٰٔۡتُمۡ ← فادّارَأْتُم)
+  const daratum = inAyah(2, 72, 'فاداراتم');
+  check(
+    hasNot(daratum!, 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُخَفَّف') && hasNot(daratum!, 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُثَقَّل'),
+    'فَٱدَّٰرَٰٔۡتُمۡ: الخنجريةُ كُرسيُّ الهمزة فلا مدَّ لازم',
+    rulesOf(daratum!),
+  );
+  check(near(daratum, 6.5), 'فَٱدَّٰرَٰٔۡتُمۡ: ٦٫٥ حركات (كانت ١٢ قبل ضبط الكُرسيّ)', `${hOf(daratum)} حركات`);
+
+  // 3) خنجريةٌ مرسومةٌ على الهمزة نفسها ← مَدُّ بدل (قُرۡءَـٰنࣰا · ٱلۡـَٔـٰنَ · سَوۡءَٰتُهُمَا)
+  const quranan = inAyah(12, 2, 'قرءانا');
+  check(has(quranan!, 'مَدُّ الْبَدَل'), 'قُرۡءَـٰنࣰا → مَدُّ بدلٍ لا طبيعي', rulesOf(quranan!));
+  check(near(quranan, 4.75), 'قُرۡءَـٰنࣰا: ألفُ التنوين لا مقطعَ لها (٤٫٧٥)', `${hOf(quranan)} حركات`);
+  const alana = inAyah(10, 51, 'ءالان');
+  check(
+    has(alana!, 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُخَفَّف') && has(alana!, 'مَدُّ الْبَدَل'),
+    'ءَاۤلۡـَٔـٰنَ → لازمٌ كلميٌّ مخفَّف + مَدُّ بدل',
+    rulesOf(alana!),
+  );
+  check(near(alana, 9.5), 'ءَاۤلۡـَٔـٰنَ: ٩٫٥ حركات (٦ لللازم و٢ للبدل)', `${hOf(alana)} حركات`);
+  const qurananW = inAyah(12, 2, 'قرءانا', 'warsh');
+  check(hOf(qurananW) > hOf(quranan), 'قُرۡءَـٰنࣰا عند ورش: البدلُ أربعٌ لا حركتان', `${hOf(quranan)} ← ${hOf(qurananW)}`);
+
+  // 4) ألفُ التنوين المفتوح رسمٌ لحملة الفتحتين لا مقطعٌ زائد
+  const arabiyyan = inAyah(12, 2, 'عربيا');
+  check(near(arabiyyan, 4.25), 'عَرَبِیࣰّا: تنوينٌ وغُنّةٌ خفيفة ولا حركةَ للألف', `${hOf(arabiyyan)} حركات`);
+
+  // 5) أثرُ عدّ الحركات: مجموعُ الخطوات = الحركات، ولكل خطوةٍ سببٌ معروض
+  const tr = timingTraceOf('ٱلرَّحۡمَـٰنِ', 'ٱلرَّحِیمِ', 'بِسۡمِ', 'hafs', 'tartil');
+  const sum = Math.round(tr.steps.reduce((a, s) => a + s.h, 0) * 100) / 100;
+  check(Math.abs(sum - tr.harakat) < 0.011, 'خطواتُ الأثر تجمعُ حركاتِ الكلمة نفسها', `${sum} مقابل ${tr.harakat}`);
+  check(tr.steps.every((s) => s.why.length > 0), 'لكل خطوةٍ سببٌ يُعرض على المتعلِّم', String(tr.steps.length));
+  check(tr.expectedMs >= tr.minMs && tr.expectedMs <= tr.maxMs, 'الزمنُ المنتظر داخلَ نافذة الأوجه', `${tr.minMs}..${tr.expectedMs}..${tr.maxMs}`);
+
+  // 6) ضابطٌ على المصحف كلّه: لا كلمةَ تجاوز مدًّا معقولًا (أطولُها فواتحُ السور)
+  let over = 0;
+  let longest = 0;
+  let longestWord = '';
+  for (const s of quran.surahs) {
+    for (const a of s.ayahs) {
+      const ws = a.text.trim().replace(/[\u200a\u2060\u200c\ufeff]/g, '').split(/\s+/).filter((w: string) => /[\u0621-\u064A]/.test(w));
+      for (const r of analyzeWords(ws)) {
+        if (r.harakat > longest) { longest = r.harakat; longestWord = r.word; }
+        if (r.harakat > 24) over++;
+      }
+    }
+  }
+  check(over === 0, 'لا كلمةَ في المصحف تجاوز ٢٤ حركةً', `أطولها ${longestWord} = ${longest} حركات`);
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURES / ${pass} passed`}`);

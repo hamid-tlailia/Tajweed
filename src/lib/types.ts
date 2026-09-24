@@ -48,11 +48,20 @@ export interface LiveSnapshot {
   doneCount: number;
   violations: number;
   okCount: number;
-  words: { status: LiveWordStatus; measuredMs: number }[];
+  /** كم كلمة تقدّم بها الضوء على تقدير النموذج (بلا سكتةٍ ولا انخفاض صوت) */
+  estimatedCount: number;
+  words: { status: LiveWordStatus; measuredMs: number; boundary?: string }[];
   currentVoicedMs: number;
   currentExpectedMs: number;
+  /** نافذة الأوجه الجائزة للكلمة الجارية (قصْر/توسّط/إشباع حيث جازت) */
+  currentMinMs: number;
+  currentMaxMs: number;
+  /** مقدار الكلمة الجارية بالحركات — يُعرض للمتعلِّم مع الزمن */
+  currentHarakat: number;
   stalledMs: number; // صمتٌ منذ آخر صوت (بعد البدء)
   lastAlert: LiveAlert | null;
+  /** كيف أُقفلت آخر كلمة: سكتة/انخفاض/تقدير نموذج/تجاوز */
+  lastBoundary: 'gap' | 'dip' | 'model' | 'timeout' | null;
   finished: boolean;
 }
 
@@ -120,6 +129,16 @@ export interface WordTajweed {
   ghunnaType: string | null; // أول حكم غُنّة مكتشف (للعرض المختصر)
   rules: RuleBadge[]; // كل الأحكام المكتشفة (مدود أولًا، ثم غُنن، ثم أحكام الحروف)
   expectedMs: number; // model expected duration for tajweed timing
+  /**
+   * نافذة الأوجه الجائزة لزمن الكلمة (بالملي ثانية): من قرأ بالقصر أو التوسط
+   * أو الإشباع حيث جازت لم يُخطَّأ. وتساوي expectedMs حين لا أوجه للكلمة.
+   */
+  minMs: number;
+  maxMs: number;
+  /** مقدار الكلمة بالحركات (وحدة القياس في التجويد) — للعرض التعليمي */
+  harakat: number;
+  /** الكلمة في موضع وقفٍ (آخر الآية/المقطع) — تُحسب فيها أحكام الوقف */
+  atWaqf?: boolean;
 }
 
 export type WordStatus = 'excellent' | 'ok' | 'short' | 'long' | 'silent';
@@ -178,6 +197,11 @@ export interface AlignmentResult {
   passed: boolean;
   /** التحكيم بالقارئ المعتمد — يُملأ عند توافر مرجعٍ للآية */
   reciter?: ReciterCompare;
+  /**
+   * نتيجةٌ لحظية (قياس الصوت وحده بلا سماع ذكي): تظهر فور إيقاف التسجيل،
+   * ثم يُستأنف التحليل الأدقّ في الخلفية إن كان السماع الذكي مُجهَّزًا.
+   */
+  instant?: boolean;
 }
 
 export interface TargetSpec {

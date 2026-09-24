@@ -57,10 +57,18 @@ export default function LiveCoach({
   const upcomingTj = upcomingIdx >= 0 ? tjs[upcomingIdx] : null;
 
   const livePct = snapshot.doneCount ? Math.round((100 * snapshot.okCount) / snapshot.doneCount) : null;
-  const barPct = snapshot.currentExpectedMs
-    ? Math.min(140, Math.round((100 * snapshot.currentVoicedMs) / snapshot.currentExpectedMs))
-    : 0;
-  const over = snapshot.currentExpectedMs > 0 && snapshot.currentVoicedMs > snapshot.currentExpectedMs * 1.45;
+  // الشريط يُرسم إلى **نافذة الأوجه الجائزة**: منطقةٌ خضراء بين أدنى وجهٍ
+  // جائز (القصر عند ورش مثلًا) وأعلاه (الإشباع)، فيرى القارئ متى يبلغ
+  // المقدار ومتى يجاوزه، بدل علامةٍ واحدة لا تُرضي إلا وجهًا واحدًا.
+  const expMs = snapshot.currentExpectedMs;
+  const minMs = snapshot.currentMinMs || expMs;
+  const maxMs = Math.max(snapshot.currentMaxMs || expMs, minMs);
+  const barEnd = Math.max(maxMs * 1.18, expMs * 1.35, 240);
+  const barPct = expMs ? Math.min(100, Math.round((100 * snapshot.currentVoicedMs) / barEnd)) : 0;
+  const zoneFrom = expMs ? Math.min(99, Math.round((100 * minMs) / barEnd)) : 0;
+  const zoneTo = expMs ? Math.min(100, Math.round((100 * maxMs) / barEnd)) : 0;
+  const over = expMs > 0 && snapshot.currentVoicedMs > maxMs * 1.12;
+  const ranged = maxMs > minMs * 1.12;
 
   const alert = snapshot.lastAlert;
   const alertFresh = !snapshot.finished && alert && Date.now() - alert.at < 4500 ? alert : null;
@@ -81,6 +89,11 @@ export default function LiveCoach({
           <span className="font-brand text-[11px] text-slate-400">
             {snapshot.doneCount}/{n} كلمة
             {snapshot.violations ? <span className="ms-1.5 text-danger-300">· {snapshot.violations} مخالفة</span> : null}
+            {snapshot.estimatedCount ? (
+              <span className="ms-1.5 text-slate-500" title="كلمات تقدّم بها الضوء على تقدير النموذج لعدم ظهور حدٍّ مسموع">
+                · {snapshot.estimatedCount} تقديرًا
+              </span>
+            ) : null}
           </span>
           <button
             type="button"
@@ -105,21 +118,44 @@ export default function LiveCoach({
             </div>
             <div className="shrink-0 text-end font-brand text-[10px] leading-relaxed text-slate-400">
               <div dir="ltr">
-                {fmtSec(snapshot.currentVoicedMs)} / {fmtSec(snapshot.currentExpectedMs)}
+                {fmtSec(snapshot.currentVoicedMs)} / {ranged ? `${fmtSec(minMs)}–${fmtSec(maxMs)}` : fmtSec(expMs)}
               </div>
-              <div className={over ? 'text-warn-300' : 'text-mint-300'}>{over ? 'تجاوزتَ المقدار' : 'في المقدار'}</div>
+              <div className={over ? 'text-warn-300' : 'text-mint-300'}>
+                {over ? 'تجاوزتَ المقدار' : snapshot.currentVoicedMs >= minMs ? 'في المقدار' : 'أتمم المدّ'}
+              </div>
+              {snapshot.currentHarakat ? (
+                <div className="text-[9px] text-gold-300/80">≈ {snapshot.currentHarakat} حركة</div>
+              ) : null}
             </div>
           </div>
-          {/* شريط الزمن الحي */}
+          {/* شريط الزمن الحي: المنطقة الجائزة ثم مؤشّر صوتك */}
           <div className="relative mt-2 h-2 overflow-visible rounded-full bg-ink-700/80">
+            {expMs ? (
+              <span
+                className="absolute inset-y-0 rounded-full bg-mint-500/25 ring-1 ring-inset ring-mint-500/40"
+                style={{ insetInlineStart: `${zoneFrom}%`, width: `${Math.max(1.5, zoneTo - zoneFrom)}%` }}
+                title="الأوجه الجائزة في هذا الموضع"
+              />
+            ) : null}
             <div
-              className={`h-full rounded-full transition-[width] duration-100 ${
+              className={`relative h-full rounded-full transition-[width] duration-100 ${
                 over ? 'bg-warn-500' : 'bg-gradient-to-l from-gold-500 to-mint-500'
               }`}
-              style={{ width: `${Math.min(100, barPct)}%` }}
+              style={{ width: `${barPct}%` }}
             />
-            <span className="absolute top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded bg-gold-300" style={{ insetInlineStart: '100%' }} />
+            {expMs ? (
+              <span
+                className="absolute top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded bg-gold-300"
+                style={{ insetInlineStart: `${Math.min(100, Math.round((100 * expMs) / barEnd))}%` }}
+                title="المقدار المختار (وسط الأوجه)"
+              />
+            ) : null}
           </div>
+          {ranged ? (
+            <p className="mt-1.5 text-[9px] leading-relaxed text-slate-500">
+              لهذا الموضع أوجهٌ جائزة بين {fmtSec(minMs)} و{fmtSec(maxMs)} — فأنت مصيبٌ بأيّها قرأت، والخطّ الذهبي أوسطها.
+            </p>
+          ) : null}
           {curTj ? (
             <div className="mt-2.5">
               <RuleBadges rules={curTj.rules} max={4} />

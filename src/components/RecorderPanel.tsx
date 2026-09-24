@@ -5,7 +5,7 @@ import { runAlignment } from '@/lib/alignment';
 import { Recorder, decodeBlobTo16k, makeDemoSamples } from '@/lib/audio';
 import { LiveTajweedTracker } from '@/lib/live';
 import { buildTarget } from '@/lib/quran';
-import { analyzeWords } from '@/lib/tajweed';
+import { analyzeTargetWords, analyzeWords } from '@/lib/tajweed';
 import type { LiveSnapshot, ModelEvent } from '@/lib/types';
 import { fmtTime, waveThemeColors } from '@/lib/util';
 import { wordViolation } from '@/lib/haptics';
@@ -94,6 +94,8 @@ export default function RecorderPanel() {
   const setResult = useTahqiq((s) => s.setResult);
   const alertOn = useTahqiq((s) => s.alertOn);
   const setAlertOn = useTahqiq((s) => s.setAlertOn);
+  const instantEval = useTahqiq((s) => s.instantEval);
+  const setRefining = useTahqiq((s) => s.setRefining);
 
   const recRef = useRef<Recorder | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -101,6 +103,10 @@ export default function RecorderPanel() {
   const busyRef = useRef(false);
   const trackerRef = useRef<LiveTajweedTracker | null>(null);
   const livePushRef = useRef(0);
+  /** هل حلقة المستوى اللحظية (١٠ م.ث) هي التي تُغذّي المتتبّع؟ */
+  const levelLoopRef = useRef(false);
+  /** رقم الجلسة: يُبطل تحسينًا خلفيًا قديمًا إن بدأ القارئ تسجيلًا جديدًا */
+  const sessionRef = useRef(0);
   const [elapsed, setElapsed] = useState(0);
   const [hasLastInput, setHasLastInput] = useState(false);
   const [live, setLive] = useState<LiveSnapshot | null>(null);
@@ -122,6 +128,7 @@ export default function RecorderPanel() {
   useEffect(
     () => () => {
       recRef.current?.stopWaveLoop();
+      recRef.current?.stopLevelLoop();
     },
     [],
   );
@@ -144,7 +151,7 @@ export default function RecorderPanel() {
     if (!data) return;
     const target = buildTarget(data, scope, selectedAyah);
     if (!target.words.length) return;
-    const tjs = analyzeWords(target.words.map((w) => w.word), riwayah, tempo);
+    const tjs = analyzeTargetWords(target.words, riwayah, tempo);
     livePushRef.current = 0;
     setLive(null);
     trackerRef.current = new LiveTajweedTracker(tjs, target.words, tau, (e) => {
@@ -157,9 +164,11 @@ export default function RecorderPanel() {
     });
   }
 
+  /** التحليل الكامل (بالسماع الذكي إن كان مُجهَّزًا) — يحجز الواجهة حتى ينتهي */
   async function runAnalysis(input: { samples: Float32Array; url: string | null; demo: boolean }) {
     if (!data || busyRef.current) return;
     busyRef.current = true;
+    const session = ++sessionRef.current;
     lastInputRef.current = input;
     setHasLastInput(true);
     const target = buildTarget(data, scope, selectedAyah);
@@ -173,14 +182,67 @@ export default function RecorderPanel() {
           model: modelHook,
         },
       );
-      setResult(res);
+      if (sessionRef.current === session) setResult(res);
     } catch (e: any) {
       console.error('[TAHQIQQ] analysis failed:', e);
       useTahqiq.setState({ modelMessage: e?.message ?? 'حدث خطأ غير متوقع أثناء التحليل' });
     } finally {
       busyRef.current = false;
-      setProcessing(false, '');
+      if (sessionRef.current === session) setProcessing(false, '');
     }
+  }
+
+  /**
+   * تحليلٌ خلفي أدقّ بعد نتيجةٍ لحظية: لا يحجز الواجهة ولا يُظهر مؤشرًا،
+   * ويستبدل النتيجة متى انتهى — إلا إن كان القارئ قد بدأ جلسةً جديدة.
+   */
+  async function refineInBackground(
+    input: { samples: Float32Array; url: string | null; demo: boolean },
+    session: number,
+  ) {
+    if (!data) return;
+    const target = buildTarget(data, scope, selectedAyah);
+    setRefining(true);
+    try {
+      const res = await runAlignment(input, { tau, modelSize, target, riwayah, tempo }, { stage: () => {}, model: modelHook });
+      if (sessionRef.current === session && !res.demo) setResult(res);
+    } catch (e) {
+      // تبقى النتيجة اللحظية معروضة — لا يُفسد التحسينُ الخلفي ما ظهر
+      console.warn('[TAHQIQQ] refine failed:', e);
+    } finally {
+      if (sessionRef.current === session) setRefining(false);
+    }
+  }
+
+  /**
+   * تقييم التلاوة: إن كان «التقييم اللحظي» مُفعَّلًا ظهرت النتيجة في جزءٍ من
+   * الثانية (قياسُ أزمنة الكلمات من مغلَّف الطاقة وحده، بلا انتظار السماع
+   * الذكي)، ثم يُستأنف التحليل الأدقّ في الخلفية ويُستبدل بالنتيجة.
+   */
+  async function evaluate(input: { samples: Float32Array; url: string | null; demo: boolean }) {
+    if (!data || busyRef.current) return;
+    if (!instantEval || input.demo) {
+      await runAnalysis(input);
+      return;
+    }
+    busyRef.current = true;
+    const session = ++sessionRef.current;
+    lastInputRef.current = input;
+    setHasLastInput(true);
+    const target = buildTarget(data, scope, selectedAyah);
+    setProcessing(true, 'قياس لحظي للأزمنة…');
+    let quick = null;
+    try {
+      quick = await runAlignment(input, { tau, modelSize, target, riwayah, tempo, fast: true }, { stage: () => {} });
+    } catch (e) {
+      console.warn('[TAHQIQQ] instant pass failed:', e);
+    }
+    busyRef.current = false;
+    setProcessing(false, '');
+    if (!quick || sessionRef.current !== session) return;
+    setResult(quick); // تظهر النتيجة الآن — والقارئ لا ينتظر
+    const { modelStatus } = useTahqiq.getState();
+    if (modelStatus === 'ready' || modelStatus === 'loading') void refineInBackground(input, session);
   }
 
   async function onToggleRecord() {
@@ -188,27 +250,37 @@ export default function RecorderPanel() {
     if (!recording) {
       const r = new Recorder();
       recRef.current = r;
+      const pushLive = (tracker: LiveTajweedTracker) => {
+        const now = performance.now();
+        if (now - livePushRef.current > 80) {
+          livePushRef.current = now;
+          setLive(tracker.snapshot());
+        }
+      };
       r.onWave = (td) => {
         const c = canvasRef.current;
         if (c) drawLive(c, td);
-        // المرافقة الحية: طاقة الإطار تُغذّي المتتبِّع (rms من العيّنة الزمنية)
+        // احتياط: إن تعذّرت حلقة المستوى اللحظية غُذّي المتتبّع من إطار الرسم
         const tracker = trackerRef.current;
-        if (tracker) {
+        if (tracker && !levelLoopRef.current) {
           let s = 0;
           for (let i = 0; i < td.length; i++) s += td[i] * td[i];
-          const rms = Math.sqrt(s / td.length);
-          tracker.feed(rms, performance.now());
-          const now = performance.now();
-          if (now - livePushRef.current > 90) {
-            livePushRef.current = now;
-            setLive(tracker.snapshot());
-          }
+          tracker.feed(Math.sqrt(s / td.length), performance.now());
+          pushLive(tracker);
         }
+      };
+      // المرافقة الحية: إطارات ١٠ م.ث متصلة — أدقّ في كشف حدود الكلمات
+      r.onLevel = (rms, tMs) => {
+        const tracker = trackerRef.current;
+        if (!tracker) return;
+        tracker.feed(rms, tMs);
+        pushLive(tracker);
       };
       try {
         await r.start();
-        r.startWaveLoop();
         startLiveSession();
+        levelLoopRef.current = r.startLevelLoop();
+        r.startWaveLoop();
         setRecording(true, null);
       } catch {
         setRecording(false, r.micError);
@@ -219,6 +291,8 @@ export default function RecorderPanel() {
       const r = recRef.current;
       if (!r) return;
       r.stopWaveLoop();
+      r.stopLevelLoop();
+      levelLoopRef.current = false;
       setRecording(false, null);
       trackerRef.current?.finish();
       const snap = trackerRef.current?.snapshot() ?? null;
@@ -231,7 +305,8 @@ export default function RecorderPanel() {
         setProcessing(true, 'قراءة التسجيل…');
         const samples = await decodeBlobTo16k(blob);
         const url = URL.createObjectURL(blob);
-        void runAnalysis({ samples, url, demo: false });
+        setProcessing(false, '');
+        void evaluate({ samples, url, demo: false });
       } catch {
         setProcessing(false, '');
         setRecording(false, 'تعذّرت قراءة التسجيل');
@@ -247,7 +322,8 @@ export default function RecorderPanel() {
       setProcessing(true, 'قراءة الملف الصوتي…');
       const samples = await decodeBlobTo16k(f);
       const url = URL.createObjectURL(f);
-      void runAnalysis({ samples, url, demo: false });
+      setProcessing(false, '');
+      void evaluate({ samples, url, demo: false });
     } catch {
       setProcessing(false, '');
       setRecording(false, 'تعذّرت قراءة الملف الصوتي');
@@ -275,7 +351,7 @@ export default function RecorderPanel() {
   );
   const hasLive = !!liveWords;
   const liveTjs = useMemo(
-    () => (liveTarget && hasLive ? analyzeWords(liveTarget.words.map((w) => w.word), riwayah, tempo) : []),
+    () => (liveTarget && hasLive ? analyzeTargetWords(liveTarget.words, riwayah, tempo) : []),
     [liveTarget, hasLive, riwayah, tempo],
   );
 

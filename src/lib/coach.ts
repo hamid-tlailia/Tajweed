@@ -59,7 +59,7 @@ export function liveTip(rawWord: string, tj: WordTajweed, status: WordStatus, in
         word,
         status,
         title: 'خفّت القلقلة',
-        action: `قلقلة «${word}» لم تظهر. أظهر bounce الحرف (قطب جد) بوضوح عند النطق.`,
+        action: `قلقلة «${word}» لم تظهر. أظهر قلقلة الحرف (قُطْبُ جَدٍّ) بانفراجٍ صوتيّ بعد سكونه، ولا تبتلعه.`,
       };
     }
     return {
@@ -111,18 +111,38 @@ export function buildCoach(
   tempoScale = 1,
 ): { tips: CoachTip[]; summary: string; passed: boolean } {
   const tips = words.map(tipFor).filter((x): x is CoachTip => !!x);
-  const passed = score >= PASS_SCORE;
   const n = words.length || 1;
   const silent = words.filter((w) => w.status === 'silent').length;
   const short = words.filter((w) => w.status === 'short').length;
   const long = words.filter((w) => w.status === 'long').length;
   const good = words.filter((w) => w.status === 'excellent' || w.status === 'ok').length;
 
+  /**
+   * بابٌ ثانٍ للاجتياز غير الدرجة: فالدرجةُ متوسِّطٌ، ومتوسِّطٌ قد يرتفع
+   * بكلماتٍ صحيحةٍ كثيرة وإن خرجت كلماتٌ أخرى خروجًا بيّنًا عن الأوجه الجائزة
+   * (كأن يقرأ الآية كلّها بإيقاعٍ واحد فلا يُميّز مدًّا من غيره). فلا تجتاز
+   * تلاوةٌ كان ثلثُ كلماتها أو أكثر خارج المقدار — والكلمة المتروكة تُعدّ
+   * بأكثر من خارجة، لأن إسقاط الكلمة أفحش من تطويلها أو تقصيرها.
+   */
+  const fault = short + long + Math.round(2.5 * silent);
+  const allowedFault = Math.max(1, Math.round(n / 3));
+  const withinFault = fault <= allowedFault;
+  const passed = score >= PASS_SCORE && withinFault;
+
   const parts: string[] = [];
   if (passed) {
     parts.push(`أحسنت — ${score}% درجة جيدة. ${good} من ${n} كلمة في المقدار.`);
     if (tips.length) parts.push(`بقيَت ${tips.length} ملاحظة خفيفة راجعها قبل الآية التالية.`);
     else parts.push('لا ملاحظات على الأزمنة. انتقل للآية التالية متى شئت.');
+  } else if (score >= PASS_SCORE) {
+    parts.push(
+      `الدرجة ${score}% بلغت حدّ الاجتياز، غير أن ${fault > n ? n : short + long + silent} من ${n} كلمة ` +
+        `خرجت عن المقدار الجائز — والحدّ ثلثُ الكلمات (${allowedFault}).`,
+    );
+    if (silent) parts.push(`منها ${silent} كلمة لم تُسمع.`);
+    if (short) parts.push(`و${short} كلمة أقصر من أدنى الأوجه (غالبًا مدّ أو غنّة ناقصة).`);
+    if (long) parts.push(`و${long} كلمة أطول من أعلاها.`);
+    if (tips[0]) parts.push(`ابدأ بإصلاح: ${tips[0].action}`);
   } else {
     parts.push(`الدرجة ${score}% — لم تبلغ حدّ الاجتياز (${PASS_SCORE}%).`);
     if (silent) parts.push(`${silent} كلمة لم تُسمع.`);

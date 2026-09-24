@@ -9,7 +9,7 @@ import { energyEnvelope } from './audio';
 import { buildCoach } from './coach';
 import { scoreTranscriptMatch } from './match';
 import { targetTextOf } from './quran';
-import { analyzeWords, classifyWord, normalizeArabic, tajweedScore, verdictFor } from './tajweed';
+import { analyzeTargetWords, classifyWord, normalizeArabic, tajweedScore, verdictFor } from './tajweed';
 import type {
   AlignmentResult,
   EngineId,
@@ -37,6 +37,12 @@ export interface AlignOpts {
   target: TargetSpec;
   riwayah: Riwayah;
   tempo: Tempo;
+  /**
+   * التقييم اللحظي: تحليلٌ فوريّ بقياس الصوت وحده (بلا سماع ذكي)، فيظهر
+   * الحكم خلال عُشر ثانية بدلًا من ثوانٍ. وهو أدنى دقةً في تمييز الألفاظ
+   * (لا نصّ مسموعًا) لكن أزمنةَ الكلمات تُقاس بالمحرّك نفسه.
+   */
+  fast?: boolean;
 }
 
 export interface AlignHooks {
@@ -60,7 +66,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const durationMs = (samples.length / sr) * 1000;
   const words = opts.target.words;
   const tempo = opts.tempo ?? 'tartil';
-  const tjs: WordTajweed[] = analyzeWords(words.map((w) => w.word), opts.riwayah, tempo);
+  const tjs: WordTajweed[] = analyzeTargetWords(words, opts.riwayah, tempo);
 
   hooks.stage('تهيئة الصوت المسجَّل…');
   const energy = energyEnvelope(samples, FRAME_MS);
@@ -72,7 +78,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   let matchSource: AlignmentResult['matchSource'] = 'coverage';
   let predWords: { word: string; ok: boolean }[] = [];
 
-  if (!input.demo) {
+  if (!input.demo && !opts.fast) {
     try {
       hooks.model?.({ status: 'loading', progress: 0 });
       const b = await loadWhisper(opts.modelSize, (p) =>
@@ -139,10 +145,16 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   }
   const tempoScale = clamp(median(ratios) || 1, 0.35, 3);
   const refMs = tjs.map((t) => Math.max(60, t.expectedMs * tempoScale));
+  // نافذة الأوجه الجائزة بعدلة السرعة نفسها: فمن قرأ بالقصر أو التوسط أو
+  // الإشباع حيث جازت لم يُخطَّأ، ومن نقص عن أدنى الأوجه أُخذ به.
+  const refWin = tjs.map((t) => ({
+    minMs: Math.max(60, Math.min(t.minMs ?? t.expectedMs, t.expectedMs) * tempoScale),
+    maxMs: Math.max(60, Math.max(t.maxMs ?? t.expectedMs, t.expectedMs) * tempoScale),
+  }));
 
   const alignWords: WordAlignment[] = words.map((w, i) => {
     const { startMs, endMs } = spans[i];
-    const status = classifyWord(measuredMs[i], refMs[i], opts.tau);
+    const status = classifyWord(measuredMs[i], refMs[i], opts.tau, refWin[i]);
     let conf = perWord[i].conf;
     if (engine === 'whisper-attn') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
     else if (engine === 'whisper-ts') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
@@ -156,13 +168,18 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
       confidence: conf,
       status,
       // الزمن المرجعيّ المعروض هو نفسه الذي حُكمت به الكلمة: بعدلة سرعة القارئ
-      tajweed: { ...tjs[i], expectedMs: Math.round(refMs[i]) },
+      tajweed: {
+        ...tjs[i],
+        expectedMs: Math.round(refMs[i]),
+        minMs: Math.round(refWin[i].minMs),
+        maxMs: Math.round(refWin[i].maxMs),
+      },
     };
   });
 
   const meanConf = mean(alignWords.map((w) => w.confidence));
   // انتظام النسق: مطابقة الأزمنة بعدلة السرعة (وهو ما يُقاس عليه المتعلّم فعلًا)
-  const rhythm = mean(measuredMs.map((m, i) => tajweedScore(m, refMs[i], opts.tau)));
+  const rhythm = mean(measuredMs.map((m, i) => tajweedScore(m, refMs[i], opts.tau, refWin[i])));
   // ملاءمة المرتبة المختارة: انحراف السرعة وحده لا يُسقط الدرجة، لكن أثره يظهر فيها
   const tempoFit = clamp(1 - Math.abs(Math.log2(tempoScale)) / 2.4, 0, 1);
   const meanTj = 0.85 * rhythm + 0.15 * tempoFit;
@@ -173,6 +190,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource = 'demo';
     predWords = words.map((w) => ({ word: normalizeArabic(w.word), ok: true }));
   } else if (matchSource !== 'transcript') {
+    // (ومنه التقييم اللحظي: لا يستمع بالألفاظ، فتُعتَمد تغطية الكلمات المسموعة)
     transcriptMatch = voiced;
     matchSource = 'coverage';
   } else if (transcriptMatch < 0.12 && voiced > 0.5) {
@@ -206,6 +224,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     tips: coach.tips,
     summary: coach.summary,
     passed: coach.passed,
+    instant: !!opts.fast,
   };
 }
 

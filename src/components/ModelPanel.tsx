@@ -29,6 +29,8 @@ export default function ModelPanel() {
   const setTau = useTahqiq((s) => s.setTau);
   const tempo = useTahqiq((s) => s.tempo);
   const setTempo = useTahqiq((s) => s.setTempo);
+  const instantEval = useTahqiq((s) => s.instantEval);
+  const setInstantEval = useTahqiq((s) => s.setInstantEval);
   const modelStatus = useTahqiq((s) => s.modelStatus);
   const modelProgress = useTahqiq((s) => s.modelProgress);
   const modelMessage = useTahqiq((s) => s.modelMessage);
@@ -133,6 +135,42 @@ export default function ModelPanel() {
         <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
           كلما زادت الصرامة طالبَ التطبيقُ نطقَك بأدقّ مقدارٍ للمدود والغنن (طبيعي حركتان، متصل ٤–٥، لازم ٦…).
         </p>
+      </div>
+
+      {/* التقييم اللحظي */}
+      <div className="mt-5 rounded-xl border border-line bg-ink-850/70 p-3.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-200">التقييم اللحظي</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+              تظهر النتيجة <b className="text-slate-300">فور إيقاف التسجيل</b> (قياسُ أزمنة الكلمات من صوتك بلا انتظار
+              السماع الذكي)، ثم يُستكمل التحليلُ الأدقّ في الخلفية وتُستبدل النتيجةُ به إن كان السماع مُجهَّزًا — فلا
+              تنتظر ثوانٍ بعد كل آية.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={instantEval}
+            aria-label="التقييم اللحظي"
+            onClick={() => setInstantEval(!instantEval)}
+            className={`relative h-6 w-11 shrink-0 rounded-full border transition ${
+              instantEval ? 'border-gold-500/70 bg-gold-500/30' : 'border-line bg-ink-700'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all ${
+                instantEval ? 'start-[22px] bg-gold-300' : 'start-0.5 bg-slate-500'
+              }`}
+              style={{ height: 18, width: 18 }}
+            />
+          </button>
+        </div>
+        {!instantEval ? (
+          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+            مُطفأ: تنتظر النتيجةُ التحليلَ الكامل (سماعًا ذكيًّا إن كان مُجهَّزًا) — أدقّ في تمييز الألفاظ وأبطأ.
+          </p>
+        ) : null}
       </div>
 
       {/* تجهيز السماع الذكي */}
