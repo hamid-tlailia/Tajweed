@@ -20,7 +20,7 @@ import type {
   Tempo,
   ThemeMode,
 } from '@/lib/types';
-import { PASS_SCORE } from '@/lib/types';
+import { PASS_SCORE, timingVerdictAllowed } from '@/lib/types';
 
 const surahCache = new Map<number, SurahData>();
 const fileProgress = new Map<string, number>();
@@ -150,13 +150,15 @@ function withReference(
   useGate: boolean,
 ): AlignmentResult {
   if (!ref || result.demo) return result;
-  const textOk = result.textCheck === 'ok' || result.textCheck === 'demo';
-  const cmp = compareWithReciter(result.words, ref, tau, textOk, ref.label, result.textCheck, {
+  // أخفق السماع الذكي؟ يُحكَم بقياس الصوت وحده فلا تُخفَّض مطابقةُ القارئ (انظر timingVerdictAllowed)
+  const verdictOk = timingVerdictAllowed(result.textCheck, result.textUnavailable);
+  const cmp = compareWithReciter(result.words, ref, tau, verdictOk, ref.label, result.textCheck, {
     tempo,
     refPace: reciter.pace,
+    textUnavailable: result.textUnavailable,
   });
   if (!cmp) return result;
-  return { ...result, reciter: cmp, passed: useGate ? result.passed && cmp.passed && textOk : result.passed };
+  return { ...result, reciter: cmp, passed: useGate ? result.passed && cmp.passed && verdictOk : result.passed };
 }
 
 interface TahqiqStore {

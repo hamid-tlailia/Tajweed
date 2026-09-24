@@ -221,6 +221,8 @@ export function buildCoach(
   const long = words.filter((w) => w.status === 'long').length;
   const good = words.filter((w) => w.status === 'excellent' || w.status === 'ok').length;
   const textOk = text.textCheck === 'ok' || text.textCheck === 'demo';
+  /** أخفق السماع الذكي فالحكمُ بقياس الصوت وحده (انظر timingVerdictAllowed) */
+  const acoustic = !textOk && !!text.textUnavailable;
 
   /**
    * بابٌ ثانٍ للاجتياز غير الدرجة: فالدرجةُ متوسِّطٌ، ومتوسِّطٌ قد يرتفع
@@ -237,11 +239,18 @@ export function buildCoach(
    * والبابُ الأول قبل ذلك كلِّه: أن يكون المقروءُ هو الآية. فلا تُجاز تلاوةٌ
    * لم يُسمع نصُّها أو سُمع فخالف — مهما حسُنت أزمنتُها.
    */
-  const passed = timingPassed && textOk;
+  const passed = timingPassed && (textOk || acoustic);
 
   const parts: string[] = [];
   const gateMsg = textGateMessage(text, transcriptMatch, n);
-  if (!textOk) {
+  if (acoustic) {
+    // حُكمٌ بقياس الصوت: تُقال علّتُه أولًا ثم يُساق الحكم كما يُساق في سائر الحالات
+    parts.push(
+      'لم يتمكّن السماع الذكي من تمييز الألفاظ، فحُكم على تلاوتك بقياس الصوت وحده — ' +
+        'تأكّد أنك قرأت الآية المختارة، وللتحقّق من اللفظ جرّب النموذج «الأدقّ» من الإعدادات.',
+    );
+  }
+  if (!textOk && !acoustic) {
     if (gateMsg) parts.push(gateMsg);
     if (text.textCheck === 'unverified') {
       if (text.textUnavailable) {
@@ -269,7 +278,7 @@ export function buildCoach(
       parts.push(`ومن جهة الأزمنة ابدأ بإصلاح: ${tips[0].action}`);
     }
   } else if (passed) {
-    parts.push(`أحسنت — ${score}% درجة جيدة. ${good} من ${n} كلمة في المقدار.`);
+    parts.push(`${acoustic ? 'وأزمنتك' : 'أحسنت —'} ${score}% درجة جيدة. ${good} من ${n} كلمة في المقدار.`);
     if (text.missing?.length) {
       parts.push(
         `غير أن ${text.missing.length === 1 ? 'كلمة' : 'كلمات'} ${missingList(text.missing)} لم تتبيّن في المسموع كما في المصحف — تحقّق من نطقها.`,

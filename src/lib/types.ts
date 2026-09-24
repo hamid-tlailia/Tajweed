@@ -239,6 +239,20 @@ export interface AyahRecord {
 
 export type TextCheck = 'ok' | 'weak' | 'mismatch' | 'unverified' | 'demo';
 
+/**
+ * هل يجوز الحكمُ على التلاوة (والاجتياز بها)؟
+ *
+ * الأصل ألّا تُجاز تلاوةٌ حتى يتبيّن أن المقروء هو الآية — فالأزمنةُ وحدها تُجيز
+ * أيَّ كلام. غير أن السماع الذكي قد **يُخفق** على الجهاز فلا يُخرج لفظًا أصلًا،
+ * فلو بقيت البوّابة مغلقة لتعذّر الاجتياز أبدًا مهما أتقن القارئ. فإذا أخفق
+ * السماع حُكم بقياس الصوت وحده (كما يُحكم بالميكروفون بلا سماعٍ ذكي)، ويُصرَّح
+ * للقارئ بأن اللفظ لم يُتحقَّق منه. أمّا إذا سمِع السماعُ لفظًا فخالف الآية فلا
+ * اجتياز: تلك مخالفةٌ مقيسة لا إخفاق.
+ */
+export function timingVerdictAllowed(textCheck: TextCheck, textUnavailable?: boolean): boolean {
+  return textCheck === 'ok' || textCheck === 'demo' || !!textUnavailable;
+}
+
 export interface AlignmentResult {
   targetKey: string;
   targetLabel: string;
