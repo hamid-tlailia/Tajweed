@@ -256,6 +256,11 @@ export interface AlignmentResult {
    *   demo       عرضٌ تجريبي
    */
   textCheck: TextCheck;
+  /**
+   * أخفق السماع الذكي: استمع إلى صوتٍ بيّن فلم يُخرج لفظًا عربيًّا واحدًا —
+   * فاللفظ لم يُتحقَّق منه (ولا يُقال إن القارئ لم يقرأ الكلمات).
+   */
+  textUnavailable?: boolean;
   /** نسبة كلمات الآية التي سُمعت / نسبة المسموع الذي من الآية (عند السماع بالألفاظ) */
   textRecall?: number;
   textPrecision?: number;

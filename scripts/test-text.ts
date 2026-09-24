@@ -276,9 +276,29 @@ async function pipeline() {
   check('«من عين» لا تُجمع فاتحةً', collapseLetterNames(['من', 'عين']).join(' ') === 'من عين');
   check('كلامٌ عادي بدل ﴿الٓمٓ﴾ يُرفض', textCheckOf(scoreTranscriptMatch('اشتركوا في القناة', 'الٓمٓ')) === 'mismatch');
   check(
-    'السماع لم يتبيّن لفظًا: رسالةٌ صريحة لا «لم يُتحقَّق بعد»',
-    /لم يتبيّن فيه لفظٌ/.test(textGateMessage({ textCheck: 'weak', heardNothing: true }, 0, 1) ?? ''),
+    'أخفق السماع الذكي: يُقال «لم يتمكّن من تمييز الألفاظ» لا إن القارئ قرأ غيرها',
+    /لم يتمكّن السماع الذكي من تمييز الألفاظ/.test(
+      textGateMessage({ textCheck: 'unverified', textUnavailable: true }, 0, 1) ?? '',
+    ),
   );
+
+  // أخفق السماع: تُعرض الأزمنة كما قِيست (بلا تقييدٍ للدرجة) ولا تُجاز التلاوة،
+  // ولا تُوسم كلماتُها «لم يُسمع لفظُها» — فالقارئ لعلّه قرأها والسماعُ هو الذي أخفق.
+  {
+    const t1 = buildTarget(surah(1), 'ayah', 1);
+    const sr = 16000;
+    const n = Math.round(4 * sr);
+    const spoken = new Float32Array(n);
+    for (let i = 0; i < n; i++) spoken[i] = 0.3 * Math.sin((2 * Math.PI * 150 * i) / sr) * (0.6 + 0.4 * Math.sin((2 * Math.PI * i) / (sr * 0.4)));
+    const r = await runAlignment(
+      { samples: spoken, demo: false },
+      { tau: 0.8, modelSize: 'tiny', target: t1, riwayah: 'hafs', tempo: 'tadwir', fast: true },
+      { stage: () => {} },
+    );
+    // (المسار اللحظي لا يستمع بالألفاظ: تُختبر هنا صياغةُ الحالة وحدها)
+    check('بلا سماعٍ بالألفاظ: لا كلمةَ تُوسم «لم يُسمع لفظُها»', r.words.every((w) => w.textHeard !== false), `${r.words.filter((w) => w.textHeard === false).length}`);
+    check('بلا سماعٍ بالألفاظ: لا اجتياز', !r.passed);
+  }
 
   // كلمةٌ لم يُسمع لفظُها لا يُنصح في زمنها ولا تُعدّ «جيدة»
   {

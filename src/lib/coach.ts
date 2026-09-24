@@ -115,8 +115,8 @@ export interface TextGateInfo {
   kind?: 'target' | 'quran' | 'speech' | 'unknown';
   /** أقرب آيةٍ أخرى إن كان المسموع آيةً غيرها */
   heardOf?: { surahId: number; surahName: string; ayah: number; match: number };
-  /** استمع السماع الذكي إلى صوتٍ بيّن فلم يتبيّن فيه لفظٌ عربيٌّ واحد */
-  heardNothing?: boolean;
+  /** أخفق السماع الذكي: صوتٌ بيّن ولم يُخرج لفظًا عربيًّا واحدًا */
+  textUnavailable?: boolean;
   /** صوتٌ مسموعٌ خارج كلمات الآية (م.ث) — يُنبَّه إليه في النتيجة اللحظية */
   extraVoiceMs?: number;
 }
@@ -149,10 +149,11 @@ export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: 
       'إن كنت تقرؤها فاخترها من تبويب التمرين، وإلا فاقرأ الآية المختارة كما في المصحف.'
     );
   }
-  if (info.heardNothing) {
+  if (info.textUnavailable) {
     return (
-      'استمع السماع الذكي إلى صوتك فلم يتبيّن فيه لفظٌ من نصّ الآية — فلا تُحتسب الأزمنة وحدها. ' +
-      'اقرأ الآية المختارة كما في المصحف بصوتٍ واضحٍ قريبٍ من الميكروفون (وإن تكرّر ذلك فجرّب النموذج «الأدقّ»).'
+      'لم يتمكّن السماع الذكي من تمييز الألفاظ في هذا التسجيل — فأزمنتك مقيسةٌ كما تراها، ' +
+      'لكن الاجتياز لا يُعتمد حتى يتبيّن أن المقروء هو الآية. أعد التسجيل بصوتٍ أوضح وأقربَ من ' +
+      'الميكروفون بعيدًا عن الضجيج، وجرّب النموذج «الأدقّ» من الإعدادات.'
     );
   }
   if (info.textCheck === 'mismatch' && info.kind === 'speech') {
@@ -243,6 +244,15 @@ export function buildCoach(
   if (!textOk) {
     if (gateMsg) parts.push(gateMsg);
     if (text.textCheck === 'unverified') {
+      if (text.textUnavailable) {
+        parts.push(
+          timingPassed
+            ? `وأزمنتك حسنة (${score}%، ${good} من ${n} كلمة في المقدار) — وتُعتمد متى تبيّن اللفظ.`
+            : `وأزمنتك ${score}%: ${good} من ${n} كلمة في المقدار.`,
+        );
+        if (tips[0]) parts.push(`ابدأ بإصلاح: ${tips[0].action}`);
+        return { tips, summary: parts.join(' '), passed };
+      }
       if (text.extraVoiceMs) {
         parts.push(
           `وسُمع صوتٌ زائدٌ على كلمات الآية (نحو ${(text.extraVoiceMs / 1000).toFixed(1)} ث) — لعلّك قرأت غيرها أو تكلّمت؛ ` +

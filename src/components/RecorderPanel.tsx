@@ -14,6 +14,7 @@ import { fmtTime, waveThemeColors } from '@/lib/util';
 import { wordViolation } from '@/lib/haptics';
 import { useTahqiq } from '@/store';
 import LiveCoach from './LiveCoach';
+import ReciterListen from './ReciterListen';
 import { IconMic, IconRefresh, IconStop, IconUpload, IconWand, Panel } from './ui';
 
 /* ---------- canvas painters ---------- */
@@ -526,6 +527,9 @@ export default function RecorderPanel() {
       title="سجّل تلاوتك"
       subtitle="اقرأ بصوت واضح وبهدوء — يُعالَج صوتك على جهازك ولا يُرفَع إلى الإنترنت أبدًا"
     >
+      {/* اسمع الآية من القارئ المعتمد ثم اقرأها — فوق زرّ الميكروفون مباشرةً */}
+      <ReciterListen />
+
       <div className="flex items-start gap-4">
         <button
           onClick={() => void onToggleRecord()}

@@ -118,6 +118,11 @@ async function toWhisperInputs(b: WhisperBundle, samples: Float32Array): Promise
   return b.processor(samples, { return_tensor: true, sampling_rate: 16000 });
 }
 
+/** هل في النصّ حرفٌ عربيٌّ واحد على الأقل؟ (علاماتُ الصمت والموسيقى ليست لفظًا) */
+export function hasArabic(s: string): boolean {
+  return /[\u0621-\u064A]/.test(String(s ?? ''));
+}
+
 export interface TsChunk {
   text: string;
   startMs: number;
@@ -149,35 +154,54 @@ export async function whisperTranscribeChunked(
   const chunks: TsChunk[] = [];
   let failures = 0;
 
+  const base: Record<string, unknown> = {
+    language: 'ar',
+    task: 'transcribe',
+    do_sample: false,
+    max_new_tokens: 384,
+    condition_on_previous_text: false,
+  };
+
+  /** المسار البسيط (بلا أزمنة): أثبتُ المسارين — يُفكّ الرمزُ منه يدويًّا */
+  async function plainGenerate(inputs: any): Promise<string> {
+    const plain: any = await b.model.generate(inputs, base);
+    if (typeof plain === 'string') return plain.trim();
+    // generate() may return a batch array, a single tensor, or a wrapper object
+    const p0 = Array.isArray(plain) ? plain[0] : plain?.sequence ?? plain;
+    const ids = toNumberArray(p0?.data ?? p0 ?? []);
+    if (!ids.length) return '';
+    const t = await b.processor.tokenizer.decode(ids, { skip_special_tokens: true });
+    return String(t ?? '').trim();
+  }
+
   /**
-   * generate() with timestamps first (richer output); if that code path
-   * throws (e.g. int64/BigInt defects in some wasm builds), retry once
-   * with the plain, proven path so the transcript is never lost.
+   * generate() with timestamps first (richer output); the plain path is the
+   * fallback — **also when the timestamps path yields no Arabic at all**, not
+   * only when it throws.
+   *
+   * كان الرجوع إلى المسار البسيط عند الاستثناء وحده؛ ومسارُ الأزمنة يُخرج أحيانًا
+   * نصًّا فارغًا (أو علاماتِ صمتٍ وموسيقى) لتلاوةٍ سليمة — فيُحسب أن القارئ لم
+   * يُسمَع له لفظٌ فتُردّ تلاوته الصحيحة. الآن: ما لم يخرج حرفٌ عربيّ واحد
+   * تُعاد المحاولة بالمسار البسيط قبل الحكم بأن الصوت لا لفظ فيه.
    */
   async function generateChunk(inputs: any): Promise<{ text: string; chunks: any[] }> {
-    const base: Record<string, unknown> = {
-      language: 'ar',
-      task: 'transcribe',
-      do_sample: false,
-      max_new_tokens: 384,
-      condition_on_previous_text: false,
-    };
+    let text = '';
+    let rawChunks: any[] = [];
     try {
       const out: any = await b.model.generate(inputs, { ...base, return_timestamps: true });
-      const rawChunks: any[] = Array.isArray(out?.chunks) ? out.chunks : [];
-      const t = String(out?.text ?? rawChunks.map((c) => String(c?.text ?? '')).join(' ')).trim();
-      return { text: t, chunks: rawChunks };
+      rawChunks = Array.isArray(out?.chunks) ? out.chunks : [];
+      text = String(out?.text ?? rawChunks.map((c) => String(c?.text ?? '')).join(' ')).trim();
     } catch (e) {
       console.warn('[TAHQIQQ] generate(return_timestamps) failed → plain retry:', (e as Error)?.message ?? e);
-      const plain: any = await b.model.generate(inputs, base);
-      if (typeof plain === 'string') return { text: plain.trim(), chunks: [] };
-      // generate() may return a batch array, a single tensor, or a wrapper object
-      const p0 = Array.isArray(plain) ? plain[0] : plain?.sequence ?? plain;
-      const ids = toNumberArray(p0?.data ?? p0 ?? []);
-      if (!ids.length) return { text: '', chunks: [] };
-      const t = await b.processor.tokenizer.decode(ids, { skip_special_tokens: true });
-      return { text: String(t ?? '').trim(), chunks: [] };
     }
+    if (hasArabic(text)) return { text, chunks: rawChunks };
+    try {
+      const t = await plainGenerate(inputs);
+      if (hasArabic(t)) return { text: t, chunks: rawChunks };
+    } catch (e) {
+      if (!text) throw e; // المساران أخفقا: يُترك للمستدعي ليرجع إلى قياس الصوت
+    }
+    return { text, chunks: rawChunks };
   }
 
   for (let i = 0; i < total; i++) {

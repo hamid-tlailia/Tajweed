@@ -285,7 +285,10 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   progress: {},
   theme: 'night',
 
-  modelSize: 'tiny',
+  // «الأدقّ» هي الأصل: بوّابة النصّ كلها قائمةٌ على تمييز الألفاظ، والنموذج الأصغر
+  // يُخفق في تمييزها فتُردّ تلاوةٌ سليمة. (٨٠ م.ب تُنزَّل مرةً ثم تُخزَّن في المتصفح،
+  // ومن اختار «السريعة» من الإعدادات بقي اختياره.)
+  modelSize: 'base',
   tau: 0.8,
   modelStatus: 'idle',
   modelProgress: 0,
