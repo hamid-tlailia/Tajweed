@@ -63,7 +63,11 @@ console.log('════════ 1) المدود ════════')
 }
 {
   const w = findWord(2, 1, (b) => b === 'الم');
-  check(has(w!, 'مَدٌّ لَازِمٌ حَرْفِيّ'), 'الٓمٓ (فاتحة البقرة) → لازم حرفي', rulesOf(w!));
+  check(
+    has(w!, 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُثَقَّل') && has(w!, 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُخَفَّف'),
+    'الٓمٓ (فاتحة البقرة) → لازمٌ حرفيٌّ مثقَّل (لام) + لازمٌ حرفيٌّ مخفَّف (ميم)',
+    rulesOf(w!),
+  );
 }
 {
   const w = findWord(2, 22, (b) => b === 'والسماء');
@@ -392,7 +396,8 @@ console.log('\\n════════ 10) تغطية المصحف كاملً�
   for (const [k, v] of sorted) console.log(`    ${v.toString().padStart(6)}  ${k}`);
   check(words > 77000 && msInvalid === 0, 'المصحف كاملًا دون استثناءات ولا أزمنة غير صالحة', `${words} كلمة، أزمنة غير صالحة: ${msInvalid}`);
   for (const must of ['إقلاب', 'إظهار حلقي', 'إدغام بغُنّة', 'إدغام بغير غُنّة', 'إخفاء', 'مَدٌّ طَبِيعِي', 'مَدٌّ وَاجِبٌ مُتَّصِل',
-    'مَدٌّ جَائِزٌ مُنْفَصِل', 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُثَقَّل', 'مَدٌّ لَازِمٌ حَرْفِيّ', 'مَدُّ الصِّلَة الصُّغْرَى', 'مَدُّ الصِّلَة الْكُبْرَى',
+    'مَدٌّ جَائِزٌ مُنْفَصِل', 'مَدٌّ لَازِمٌ كَلِمِيٌّ مُثَقَّل', 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُثَقَّل', 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُخَفَّف',
+    'مَدٌّ طَبِيعِيٌّ حَرْفِيّ', 'مَدُّ لِينٍ لَازِم (عَيْن)', 'مَدُّ الصِّلَة الصُّغْرَى', 'مَدُّ الصِّلَة الْكُبْرَى',
     'مَدُّ اللِّين (عند الوقف)', 'غُنّة مَدِّية', 'إخفاء شفوي', 'إظهار شفوي', 'راء مفخَّمة', 'راء مرقَّقة']) {
     const found = sorted.some(([k]) => k === must);
     check(found, `الحكم «${must}» مكتشف فعليًا في المصحف`);
@@ -626,11 +631,84 @@ console.log('\n════════ 17) عدّ الحركات على الر�
       const ws = a.text.trim().replace(/[\u200a\u2060\u200c\ufeff]/g, '').split(/\s+/).filter((w: string) => /[\u0621-\u064A]/.test(w));
       for (const r of analyzeWords(ws)) {
         if (r.harakat > longest) { longest = r.harakat; longestWord = r.word; }
-        if (r.harakat > 24) over++;
+        if (r.harakat > 26) over++;
       }
     }
   }
-  check(over === 0, 'لا كلمةَ في المصحف تجاوز ٢٤ حركةً', `أطولها ${longestWord} = ${longest} حركات`);
+  // أطولها «كٓهيعٓصٓ» = كَافْ ٦٫٥ + هَا ٢ + يَا ٢ + عَيْنْ ٦ وغنّة الإخفاء ٢ + صَادْ ٦٫٥ = ٢٥
+  check(over === 0, 'لا كلمةَ في المصحف تجاوز ٢٦ حركةً', `أطولها ${longestWord} = ${longest} حركات`);
+}
+
+console.log('\n════════ فواتح السور: تُهجَّى بأسماء حروفها ════════');
+{
+  // أول كلمةٍ من الآية بعد البسملة الملصقة بأول السورة في نصّ المصدر (كما يفعل التطبيق)
+  const ayahOnly = (s: number, a: number) => {
+    const ws = wordsOf(s, a);
+    return a === 1 && s !== 1 && bare(ws[0] ?? '') === 'بسم' && bare(ws[1] ?? '') === 'الله' ? ws.slice(4) : ws;
+  };
+  const first = (s: number, a: number, riwayah: Riwayah = 'hafs') => {
+    const ws = ayahOnly(s, a);
+    return analyzeWords(ws, riwayah, 'hadr', ws.map((_, i) => ({ atEnd: i === ws.length - 1, atStart: i === 0 })))[0];
+  };
+  const labels = (r: R) => r.rules.map((x) => x.label);
+  const THAQIL = 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُثَقَّل';
+  const KHAFIF = 'مَدٌّ لَازِمٌ حَرْفِيٌّ مُخَفَّف';
+
+  // ﴿الٓمٓ﴾ — أَلِفْ لَامْ مِيمْ: لامٌ مثقَّلةٌ (أُدغمت ميمُها في ميم «مِيمْ») وميمٌ مخفَّفة
+  const alm = first(2, 1);
+  check(labels(alm)[0] === THAQIL && labels(alm)[1] === KHAFIF, 'الٓمٓ: أول شارتين = اللازمان الحرفيان (مثقَّل ثم مخفَّف)', rulesOf(alm));
+  check(has(alm, 'إدغام متماثل صغير'), 'الٓمٓ: ميمُ «لَامْ» تُدغم في ميم «مِيمْ» (متماثلان بغنّة)', rulesOf(alm));
+  check(hasNot(alm, 'لاَم قَمَريّة') && hasNot(alm, 'لاَم شمسيّة'), 'الٓمٓ: لا «لام قمرية» (ليست لام تعريف بل اسم حرف)', rulesOf(alm));
+  check(Math.abs(alm.harakat - 17) < 0.01, 'الٓمٓ: ١٧ حركة (٢٫٥ + ٦ + غنّة ٢ + ٦ + ٠٫٥)', `${alm.harakat}`);
+  check(alm.expectedMs > 2500, 'الٓمٓ حدرًا ≥ ٢٫٥ ث (لا ٠٫٩ ث كقراءتها كلمةً)', `${alm.expectedMs} م.ث`);
+  check((alm.rulerWeight ?? 1) < 0.2, 'الٓمٓ لا تصلح مسطرةً للسرعة (موضع امتحان المدّ)', `${alm.rulerWeight}`);
+  check(alm.maddType === THAQIL, 'نوع المدّ المعروض للٓمٓ: اللازم الحرفي المثقَّل', String(alm.maddType));
+  const tr = timingTraceOf(ayahOnly(2, 1)[0], '', '', 'hafs', 'hadr', { atEnd: true, atStart: true });
+  check(
+    tr.steps.map((x) => x.tok).join(' ') === 'أَلِفْ لَامْ لَامْ مِيمْ مِيمْ' && tr.steps.every((x) => x.why.length > 0),
+    'أثر العدّ يُهجّي الأسماء: أَلِفْ · لَامْ (مدّ + غنّة) · مِيمْ (مدّ + سكون)',
+    tr.steps.map((x) => `${x.tok}:${x.h}`).join(' + '),
+  );
+
+  // ﴿الٓمٓصٓ﴾: ميمٌ قبل صاد ← إظهار شفوي (مخفَّف)، وصادٌ آخرها قلقلةٌ كبرى
+  const alms = first(7, 1);
+  check(labels(alms)[0] === THAQIL && has(alms, KHAFIF) && has(alms, 'إظهار شفوي'), 'الٓمٓصٓ: لامٌ مثقَّلة، وميمٌ مخفَّفة مع إظهار شفوي', rulesOf(alms));
+  check(has(alms, 'قَلْقَلَة كبرى (عند الوقف)'), 'الٓمٓصٓ: دالُ «صَادْ» تُقلقل وقفًا', rulesOf(alms));
+
+  // ﴿كٓهيعٓصٓ﴾: عينٌ فيها التوسّط والإشباع + إخفاءُ نونها عند الصاد، والهاء والياء طبيعيٌّ حرفي
+  const khy = first(19, 1);
+  check(has(khy, 'مَدُّ لِينٍ لَازِم (عَيْن)') && has(khy, 'إخفاء') && has(khy, 'مَدٌّ طَبِيعِيٌّ حَرْفِيّ'), 'كٓهيعٓصٓ: لينٌ لازمٌ في العين + إخفاء + طبيعيٌّ حرفي', rulesOf(khy));
+  check(khy.minMs < khy.expectedMs, 'كٓهيعٓصٓ: للعين وجهان (نافذة أوجه لا نقطة)', `${khy.minMs}..${khy.expectedMs}`);
+
+  // ﴿طسٓمٓ﴾: نونُ «سِينْ» تُدغم في الميم بغنّة ← سينٌ مثقَّلة، والميم الأخيرة مخفَّفة
+  const tsm = first(26, 1);
+  check(labels(tsm)[0] === THAQIL && labels(tsm)[1] === KHAFIF && has(tsm, 'إدغام بغُنّة'), 'طسٓمٓ: سينٌ مثقَّلة (إدغام بغنّة) ثم ميمٌ مخفَّفة', rulesOf(tsm));
+
+  // ﴿عٓسٓقٓ﴾: إخفاءان، ولا قلقلةَ في «قَافْ» (آخرُها فاء)
+  const asq = first(42, 2);
+  check(has(asq, 'إخفاء') && hasNot(asq, 'قَلْقَلَة كبرى (عند الوقف)'), 'عٓسٓقٓ: إخفاءٌ ولا قلقلة (قَافْ آخرها فاء)', rulesOf(asq));
+  const qaf = first(50, 1);
+  check(hasNot(qaf, 'قَلْقَلَة كبرى (عند الوقف)') && hasNot(qaf, 'قَلْقَلَة صغرى') && has(qaf, KHAFIF), 'قٓ: لازمٌ مخفَّف ولا قلقلة', rulesOf(qaf));
+
+  // ﴿نٓۚ وَٱلۡقَلَمِ﴾: حفصٌ يُظهر النون، وورشٌ يُدغمها
+  const nun = first(68, 1);
+  check(has(nun, 'إظهار نون «يسٓ» و«نٓ»') && hasNot(nun, 'إدغام بغُنّة'), 'نٓ وَٱلۡقَلَمِ: حفصٌ بالإظهار لا الإدغام', rulesOf(nun));
+  const nunW = first(68, 1, 'warsh');
+  check(has(nunW, 'إدغام بغُنّة'), 'نٓ وَٱلۡقَلَمِ: ورشٌ بالإدغام', rulesOf(nunW));
+
+  // ﴿صٓۚ وَٱلۡقُرۡءَانِ﴾ وصلًا: قلقلةٌ صغرى في دال «صَادْ»
+  const sad = first(38, 1);
+  check(has(sad, 'قَلْقَلَة صغرى'), 'صٓ وصلًا: قلقلة صغرى', rulesOf(sad));
+
+  // حَيٌّ طَهُرَ: طبيعيٌّ حرفي حركتان
+  const taha = first(20, 1);
+  check(has(taha, 'مَدٌّ طَبِيعِيٌّ حَرْفِيّ') && hasNot(taha, THAQIL) && Math.abs(taha.harakat - 4) < 0.01, 'طه: طَا هَا — طبيعيٌّ حرفي (٤ حركات)', `${rulesOf(taha)} · ${taha.harakat}`);
+  const ysn = first(36, 1);
+  check(labels(ysn)[0] === KHAFIF && has(ysn, 'مَدٌّ طَبِيعِيٌّ حَرْفِيّ'), 'يسٓ: سينٌ مخفَّفة + يَا طبيعيّ', rulesOf(ysn));
+
+  // «أَلَمۡ» ليست فاتحة (عليها حركات): لا لازم حرفي
+  const alam = analyzeWords(['أَلَمۡ', 'تَرَ'])[0];
+  check(hasNot(alam, THAQIL) && hasNot(alam, KHAFIF), '«أَلَمۡ تَرَ» ليست من الفواتح', rulesOf(alam));
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURES / ${pass} passed`}`);

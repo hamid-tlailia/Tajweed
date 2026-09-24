@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { RECITERS, ayahAudioUrls, globalAyahNumber } from '@/lib/reciter';
+import { ayahAudioUrls, globalAyahNumber, resolveReciter } from '@/lib/reciter';
 import type { Riwayah } from '@/lib/types';
 import { useTahqiq } from '@/store';
 import { IconPause, IconPlay, IconStop, Panel } from './ui';
@@ -20,16 +20,20 @@ export default function RiwayahPanel() {
   const scope = useTahqiq((s) => s.scope);
   const recording = useTahqiq((s) => s.recording);
   const data = useTahqiq((s) => s.surahCache[s.selectedSurahId] ?? null);
+  const tempo = useTahqiq((s) => s.tempo);
+  const style = useTahqiq((s) => s.recitationStyle);
+  const choice = useTahqiq((s) => s.referenceChoice);
 
   const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const reciter = RECITERS[riwayah];
+  // القارئ المرجعي نفسه الذي يُقاس إليه التحليل (التلقائي بحسب المرتبة ونوع التلاوة، أو المختار)
+  const { reciter } = resolveReciter(riwayah, tempo, style, choice);
   const firstAyahOfScope = scope === 'surah' ? 1 : ayah;
   const firstWordAyah = data?.ayahs[0]?.numberInSurah ?? firstAyahOfScope;
   const playAyah = scope === 'surah' ? firstWordAyah : firstAyahOfScope;
   const globalNo = globalAyahNumber(surahs, surahId, playAyah);
-  const urls = ayahAudioUrls(riwayah, surahId, playAyah, globalNo);
+  const urls = ayahAudioUrls(reciter, surahId, playAyah, globalNo);
 
   /** يوقف الاستماع (يُستدعى عند تغيير الآية/الرواية أو بدء التسجيل) */
   function stop() {
@@ -44,7 +48,7 @@ export default function RiwayahPanel() {
   useEffect(() => {
     stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surahId, ayah, scope, riwayah]);
+  }, [surahId, ayah, scope, riwayah, reciter.id]);
 
   // لا يُسجَّل صوتُ القارئ مع صوت المتعلِّم
   useEffect(() => {

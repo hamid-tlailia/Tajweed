@@ -7,7 +7,8 @@ import { ayahLabel, classifyUtterance, loadCorpus, utteranceTokens } from '@/lib
 import { LiveTajweedTracker } from '@/lib/live';
 import { editClose, matchTokens, scoreTranscriptMatch } from '@/lib/match';
 import { BASMALA_WORDS, buildTarget, targetTextOf } from '@/lib/quran';
-import { analyzeTargetWords, analyzeWords } from '@/lib/tajweed';
+import { TEMPO_SCALE, analyzeTargetWords, analyzeWords } from '@/lib/tajweed';
+import { priorCenter } from '@/lib/tempo';
 import type { LiveSnapshot, LiveTextCheck, ModelEvent } from '@/lib/types';
 import { fmtTime, waveThemeColors } from '@/lib/util';
 import { wordViolation } from '@/lib/haptics';
@@ -80,6 +81,14 @@ function drawLive(c: HTMLCanvasElement, td: Float32Array) {
 
 /* ---------- component ---------- */
 
+/**
+ * مهلة الإيقاف: يبقى الميكروفون يُغذّي المرافقة الحية والتسجيلَ هذه المدة بعد ضغط
+ * «إيقاف» ثم يُختمان. فبين النطق ووصول الصوت إلى حلقة المستوى زمنٌ (مخزن الميكروفون
+ * ومعالج الصوت، ويطول في الجوّال) — وكان الإيقاف الفوري يُسقط ذيل الكلمة الأخيرة
+ * فيُقاس مدُّها ناقصًا («الكلمة الأخيرة قصيرةٌ دائمًا»)، ومن يضغط مع آخر حرفٍ يُتمّه فيها.
+ */
+const STOP_FLUSH_MS = 450;
+
 export default function RecorderPanel() {
   const data = useTahqiq((s) => s.surahCache[s.selectedSurahId] ?? null);
   const scope = useTahqiq((s) => s.scope);
@@ -97,6 +106,10 @@ export default function RecorderPanel() {
   const alertOn = useTahqiq((s) => s.alertOn);
   const setAlertOn = useTahqiq((s) => s.setAlertOn);
   const instantEval = useTahqiq((s) => s.instantEval);
+  const referenceOf = useTahqiq((s) => s.referenceOf);
+  /** الإيقاف جارٍ (مهلة ختم الصوت) — يمنع بدء تسجيلٍ جديد قبل أن يُختم السابق */
+  const stoppingRef = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   const recRef = useRef<Recorder | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -186,15 +199,23 @@ export default function RecorderPanel() {
     // تهيئة فهرس المصحف للتحقّق اللحظي (هل المقروء هذه الآية أم غيرها أم كلامٌ عادي)
     if (ready) void loadCorpus().catch(() => {});
     setLiveStartedAt(Date.now());
-    trackerRef.current = new LiveTajweedTracker(tjs, target.words, tau, (e) => {
-      const { alertOn: alerts } = useTahqiq.getState();
-      // الأحكام الختامية (عند الإيقاف) تُعرض ولا تُهزّ: القارئ ضغط الإيقاف لتوّه — وكذلك البسملة قبل الآية
-      if (!e.final && !e.prefix && alerts && (e.status === 'short' || e.status === 'long' || e.status === 'silent')) {
-        wordViolation(e.status);
-      }
-      const t = trackerRef.current;
-      if (t) setLive(t.snapshot()); // تحديث فوري عند إقفال كلمة
-    });
+    // مسطرة السرعة: سرعة القارئ المرجعي (المختار أو التلقائي بحسب المرتبة ونوع التلاوة)
+    const { reciter } = referenceOf();
+    trackerRef.current = new LiveTajweedTracker(
+      tjs,
+      target.words,
+      tau,
+      (e) => {
+        const { alertOn: alerts } = useTahqiq.getState();
+        // الأحكام الختامية (عند الإيقاف) تُعرض ولا تُهزّ: القارئ ضغط الإيقاف لتوّه — وكذلك البسملة قبل الآية
+        if (!e.final && !e.prefix && alerts && (e.status === 'short' || e.status === 'long' || e.status === 'silent')) {
+          wordViolation(e.status);
+        }
+        const t = trackerRef.current;
+        if (t) setLive(t.snapshot()); // تحديث فوري عند إقفال كلمة
+      },
+      { center: priorCenter(reciter.pace, TEMPO_SCALE[tempo] ?? 1) },
+    );
   }
 
   /**
@@ -308,10 +329,11 @@ export default function RecorderPanel() {
     setHasLastInput(true);
     const target = buildTarget(data, scope, selectedAyah);
     setProcessing(true, input.demo ? 'محاكاة تلاوة للتجربة…' : 'تهيئة الصوت…');
+    const { reciter } = referenceOf();
     try {
       const res = await engineAlign(
         input,
-        { tau, modelSize, target, riwayah, tempo },
+        { tau, modelSize, target, riwayah, tempo, reference: { id: reciter.id, name: reciter.name, pace: reciter.pace } },
         {
           stage: (s) => setProcessing(true, s),
           model: modelHook,
@@ -354,7 +376,12 @@ export default function RecorderPanel() {
     setProcessing(true, 'قياس لحظي للأزمنة…');
     let quick = null;
     try {
-      quick = await engineAlign(input, { tau, modelSize, target, riwayah, tempo, fast: true }, { stage: () => {} });
+      const { reciter } = referenceOf();
+      quick = await engineAlign(
+        input,
+        { tau, modelSize, target, riwayah, tempo, fast: true, reference: { id: reciter.id, name: reciter.name, pace: reciter.pace } },
+        { stage: () => {} },
+      );
     } catch (e) {
       console.warn('[TAHQIQQ] instant pass failed:', e);
     }
@@ -365,7 +392,7 @@ export default function RecorderPanel() {
   }
 
   async function onToggleRecord() {
-    if (processing) return;
+    if (processing || stoppingRef.current) return;
     if (!recording) {
       const r = new Recorder();
       recRef.current = r;
@@ -410,10 +437,17 @@ export default function RecorderPanel() {
     } else {
       const r = recRef.current;
       if (!r) return;
+      // مهلة الختم: يُترك الميكروفون يُغذّي المرافقة والتسجيل قليلًا حتى يصل ذيلُ الصوت
+      // (انظر STOP_FLUSH_MS) — ثم تُختم الكلمة الأخيرة بطولها الحقيقي.
+      stoppingRef.current = true;
+      setStopping(true);
+      setRecording(false, null);
+      await new Promise((res) => setTimeout(res, STOP_FLUSH_MS));
+      stoppingRef.current = false;
+      setStopping(false);
       r.stopWaveLoop();
       r.stopLevelLoop();
       levelLoopRef.current = false;
-      setRecording(false, null);
       trackerRef.current?.finish();
       const snap = trackerRef.current?.snapshot() ?? null;
       if (snap) setLive(snap);
@@ -483,7 +517,7 @@ export default function RecorderPanel() {
       <div className="flex items-start gap-4">
         <button
           onClick={() => void onToggleRecord()}
-          disabled={processing}
+          disabled={processing || stopping}
           aria-label={recording ? 'إيقاف التسجيل' : 'بدء التسجيل'}
           className={`relative flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-2 transition disabled:opacity-50 ${
             recording
@@ -499,7 +533,9 @@ export default function RecorderPanel() {
             <span className="text-xs font-medium text-slate-300">
               {recording
                 ? 'جارٍ التسجيل… (اضغط للإيقاف) — الكلمات تُضاء مع صوتك بالأسفل'
-                : processing
+                : stopping
+                  ? 'جارٍ ختم التسجيل… (يُلتقط ذيل الكلمة الأخيرة)'
+                  : processing
                   ? 'جارٍ التحليل…'
                   : 'اضغط لبدء تسجيل التلاوة'}
             </span>

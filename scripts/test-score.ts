@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { runAlignment } from '../src/lib/alignment';
 import { buildTarget, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords } from '../src/lib/tajweed';
+import { autoReciter } from '../src/lib/reciter';
 import { mulberry32 } from '../src/lib/util';
 import type { SurahData, Tempo } from '../src/lib/types';
 
@@ -69,7 +70,13 @@ function recite(durationsMs: number[], gapMs = 90, seed = 7): Float32Array {
   return out;
 }
 
-async function judge(data: SurahData, ayah: number, durationsMs: number[], tempo: Tempo = 'tartil') {
+async function judge(
+  data: SurahData,
+  ayah: number,
+  durationsMs: number[],
+  tempo: Tempo = 'tartil',
+  reference?: { id: string; name: string; pace: number | null },
+) {
   const target = buildTarget(data, 'ayah', ayah);
   const tjs = analyzeWords(
     target.words.map((w) => w.word),
@@ -79,10 +86,16 @@ async function judge(data: SurahData, ayah: number, durationsMs: number[], tempo
   const samples = recite(durationsMs);
   const res = await runAlignment(
     { samples, demo: true },
-    { tau: 0.8, modelSize: 'tiny', target, riwayah: 'hafs', tempo },
+    { tau: 0.8, modelSize: 'tiny', target, riwayah: 'hafs', tempo, reference },
     { stage: () => {} },
   );
   return { res, tjs, target };
+}
+
+/** القارئ المرجعي التلقائي لمرتبة (كما يمرّره التطبيق في كل تحليل) */
+function refFor(tempo: Tempo) {
+  const r = autoReciter('hafs', tempo);
+  return { id: r.id, name: r.name, pace: r.pace };
 }
 
 async function main() {
@@ -174,6 +187,61 @@ async function main() {
     const jitter = tjs.map((t, i) => Math.round(t.expectedMs * (i % 2 ? 0.6 : 1.45)));
     const { res } = await judge(d112, 1, jitter);
     check('تذبذب ±٤٥٪ بين كلمة وأخرى لا يجتاز', !res.passed, `${res.overallScore}%`);
+  }
+
+  console.log('\n════════ 6) آيةٌ من كلمةٍ واحدة لا تُقاس بنفسها (الٓمٓ) ════════');
+  {
+    // شكوى القارئ: قرأ «الم» كلمةً عادية في ٠٫٩٢ ث حدرًا فحُكمت «متقنة» بدرجة ٧٩٪ —
+    // لأن عدلة السرعة كانت نسبةَ الكلمة نفسها (٠٫٩٢ ÷ ٢٫٥٨ ≈ ×٠٫٣٦) فطابق المتوقَّعُ المقيس.
+    for (const [label, ref] of [
+      ['بلا قارئ مرجعي', undefined],
+      ['بالقارئ المرجعي للحدر', refFor('hadr')],
+    ] as const) {
+      const { res } = await judge(d2, 1, [920], 'hadr', ref);
+      const w = res.words[0];
+      check(`الٓمٓ في ٠٫٩٢ ث حدرًا (${label}): «أقصر» لا «متقن»`, w.status === 'short', `${w.status} · ${w.endMs - w.startMs}/${w.tajweed.expectedMs} م.ث`);
+      check(`الٓمٓ في ٠٫٩٢ ث حدرًا (${label}): لا تجتاز`, !res.passed && res.overallScore < 70, `${res.overallScore}%`);
+      check(`الٓمٓ في ٠٫٩٢ ث حدرًا (${label}): الزمن المنتظر ≥ ٢ ث`, w.tajweed.expectedMs >= 2000, `${w.tajweed.expectedMs} م.ث`);
+      check(`الٓمٓ في ٠٫٩٢ ث حدرًا (${label}): الخلاصة تنبّه على إتمام المدود`, /أسرع|أقصر|المد/.test(res.summary), res.summary.slice(0, 110));
+    }
+    {
+      const exp = analyzeWords([buildTarget(d2, 'ayah', 1).words[0].word], 'hafs', 'hadr')[0].expectedMs;
+      const { res } = await judge(d2, 1, [Math.round(exp * 1.05)], 'hadr', refFor('hadr'));
+      check('الٓمٓ بمقاديرها (ستٌّ للّام وستٌّ للميم) تجتاز', res.passed && ['ok', 'excellent'].includes(res.words[0].status), `${res.words[0].status} · ${res.overallScore}%`);
+    }
+    {
+      // القرّاء المعتمدون يمطّون اللازم فوق الستّ: السديس نحو ٦٫٧ ث، والحصري نحو ٩٫٩ ث
+      const a = await judge(d2, 1, [6700], 'hadr', refFor('hadr'));
+      check('الٓمٓ بمطّ السديس (٦٫٧ ث حدرًا) لا تُحكم طويلة', ['ok', 'excellent'].includes(a.res.words[0].status), `${a.res.words[0].status} · ${a.res.overallScore}%`);
+      const b = await judge(d2, 1, [9900], 'tartil', refFor('tartil'));
+      check('الٓمٓ بمطّ الحصري (٩٫٩ ث ترتيلًا) لا تُحكم طويلة', ['ok', 'excellent'].includes(b.res.words[0].status), `${b.res.words[0].status} · ${b.res.overallScore}%`);
+    }
+    {
+      // «طه» و«يسٓ» و«حمٓ» كذلك: آياتٌ من كلمةٍ واحدة
+      const { res } = await judge(surah(36), 1, [420], 'tadwir', refFor('tadwir'));
+      check('يسٓ في ٠٫٤٢ ث (كلمةً عادية) تدويرًا: «أقصر»', res.words[0].status === 'short', `${res.words[0].status}`);
+    }
+  }
+
+  console.log('\n════════ 7) القارئ المرجعي مسطرةٌ في كل تحليل ════════');
+  {
+    const target = buildTarget(d1, 'ayah', 5);
+    const tjs = analyzeWords(
+      target.words.map((w) => w.word),
+      'hafs',
+      'tartil',
+    );
+    const good = tjs.map((t) => Math.round(t.expectedMs * 1.02));
+    const { res } = await judge(d1, 5, good, 'tartil', refFor('tartil'));
+    check('التحليل يحمل اسم القارئ المرجعي (مسطرة السرعة)', !!res.reference?.name && res.reference.id === 'husary', res.reference?.name ?? '—');
+    check('تلاوةٌ صحيحة النسق تجتاز بمرجع الترتيل', res.passed, `${res.overallScore}% · عدلة ${res.tempoScale.toFixed(2)}`);
+    const fast = tjs.map((t) => Math.round(t.expectedMs * 0.62));
+    const r2 = await judge(d1, 5, fast, 'tartil', refFor('tartil'));
+    check('الأسرع من مرجعه بنسقٍ صحيح يجتاز، وتُذكر سرعته نسبةً إلى القارئ', r2.res.passed && /القارئ المرجعي/.test(r2.res.summary), `${r2.res.overallScore}% · ${r2.res.summary.slice(0, 80)}`);
+    // آيةٌ طويلة: تحكمها سرعة قارئها لا المرجع (عدلةٌ قريبة من سرعته الفعلية)
+    const t255 = analyzeWords(buildTarget(d2, 'ayah', 255).words.map((w) => w.word), 'hafs', 'tartil');
+    const r3 = await judge(d2, 255, t255.map((t) => Math.round(t.expectedMs * 0.8)), 'tartil', refFor('tartil'));
+    check('آية الكرسي بسرعة ×٠٫٨: العدلة تتبع القارئ (لا المرجع)', Math.abs(r3.res.tempoScale - 0.8) < 0.1 && r3.res.passed, `عدلة ${r3.res.tempoScale.toFixed(2)} · ${r3.res.overallScore}%`);
   }
 
   if (fails) {

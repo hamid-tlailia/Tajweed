@@ -28,10 +28,12 @@
 // وأما التحكيم النهائي الدقيق (بتمييز الألفاظ) فيبقى للتحليل الكامل بعد
 // إيقاف التسجيل — انظر alignment.ts.
 
-import { classifyWord } from './tajweed';
+import { classifyWord, scaledWindow } from './tajweed';
 import { liveTip } from './coach';
+import { NEUTRAL_PRIOR, estimateTempo, lenientMin } from './tempo';
+import type { TempoPrior, TempoSample } from './tempo';
 import type { LiveAlert, LiveSnapshot, LiveWordStatus, WordStatus, WordTajweed } from './types';
-import { clamp, median } from './util';
+import { clamp } from './util';
 
 /** كيف حُدِّدت نهاية الكلمة: سكتةٌ أو انخفاضٌ (قياس) أم تقديرٌ من النموذج */
 export type LiveBoundary = 'gap' | 'dip' | 'model';
@@ -49,6 +51,11 @@ export interface LiveWordEvent {
   final?: boolean;
   /** كلمةٌ من البادئة (البسملة قبل الآية) — ليست من الآية */
   prefix?: boolean;
+  /**
+   * نهاية الكلمة لم تُسمع: أُوقف التسجيل والقارئ ما يزال يُصوِّت — فزمنُها المقيس
+   * حدٌّ أدنى لا زمنُها كله، فلا يُحكم عليها بالقصر (ويُترك الحكم للتحليل الكامل).
+   */
+  cut?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -150,9 +157,6 @@ const SKIP_FINAL = 1.0;
 const SPREAD_MIN_TEMPO = 0.4;
 /** تُسنَد حدود التوزيع إلى إشارةٍ حقيقية إن قربت منها (نسبةً من مقدار الكلمة) */
 const SPREAD_SNAP = 0.3;
-/** حدود عدلة السرعة المستنبطة من كلمةٍ مقيسةٍ واحدة (قبل أن يستقرّ الوسيط) */
-const SCALE_FIRST_MIN = 0.7;
-const SCALE_FIRST_MAX = 1.4;
 /**
  * إعادة الإسناد الشاملة عند الإيقاف: تُعاد مطابقة **كل** الإشارات على **كل**
  * الكلمات بعلم التسجيل كاملًا (زمنُه المصوّت كله معلوم، فسرعةُ القارئ تُقدَّر
@@ -190,6 +194,8 @@ interface Cue {
    * لا تُعدّ حدًّا في الحكم الختامي (فلا يُقطَّع الصوتُ الواحد كلماتٍ وهمية).
    */
   steady?: boolean;
+  /** حدٌّ صنعه الإيقافُ والصوتُ لم ينقطع بعد: نهاية الكلمة لم تُسمع */
+  cut?: boolean;
 }
 
 const SKIPMARK = -2;
@@ -211,18 +217,17 @@ function durCost(len: number, exp: number): number {
 }
 
 /**
- * عدلة السرعة من نِسَب الكلمات المقيسة (مقيس ÷ مقدار):
- *   - كلمةٌ واحدة: تقريبٌ موهَّن بالجذر ومحدود — فلا تبقى المطابقةُ الجارية
- *     على مقدار المرتبة الاسمية لقارئٍ أسرع منها (فتدمج كلمتين في مقطعٍ واحد
- *     وتترك آخر الآية)، ولا تنقاد لكلمةٍ واحدة شاذّة.
- *   - كلمتان: المتوسّط الهندسي (أقلُّ انقيادًا للشاذّة من الحسابي).
- *   - ثلاثٌ فأكثر: الوسيط (صامد).
+ * عدلة السرعة من نِسَب الكلمات المقيسة (مقيس ÷ مقدار) — مرجَّحةً بسرعة القارئ
+ * المرجعي ومحدودةً حولها (tempo.ts)، بأوزان الكلمات «مسطرةً»:
+ *   - قبل أول كلمةٍ مقيسة: سرعة القارئ المرجعي نفسها (لا المرتبة الاسمية).
+ *   - كلمةٌ واحدة: وسطٌ هندسيٌّ بينها وبين المرجع — فلا تبقى المطابقةُ على مقدار
+ *     المرجع لقارئٍ أسرع منه (فتدمج كلمتين في مقطعٍ واحد)، ولا تنقاد لكلمةٍ شاذّة.
+ *   - ثم يغلب الدليلُ المرجعَ كلما كثرت الكلمات.
+ * والمدّ اللازم والفواتح وكلمة الوقف لا تُحرِّك العدلة إلا قليلًا (فهي موضع الامتحان):
+ * فكلمةٌ أولى مُطالةٌ لا ترفع العدلة فتُقصِّر الكلماتِ بعدها — ومنها الأخيرة.
  */
-function scaleFromRatios(ratios: number[]): number {
-  if (!ratios.length) return 1;
-  if (ratios.length === 1) return clamp(Math.sqrt(ratios[0]), SCALE_FIRST_MIN, SCALE_FIRST_MAX);
-  if (ratios.length === 2) return clamp(Math.sqrt(ratios[0] * ratios[1]), 0.55, 2);
-  return clamp(median(ratios), 0.55, 2);
+function scaleFromSamples(samples: TempoSample[], prior: TempoPrior): number {
+  return estimateTempo(samples, prior).scale;
 }
 
 export class LiveTajweedTracker {
@@ -260,6 +265,8 @@ export class LiveTajweedTracker {
   private pendingDip: { v: number; depth: number } | null = null;
   private steadyMs = 0;
   private floorEma = 0.0045;
+  /** أُوقف التسجيل والقارئ ما يزال يُصوِّت (لم تُسمع بعد آخر صوتٍ سكتةٌ) */
+  private cutAtStop = false;
 
   /* --- الإشارات والإسناد --- */
   private cues: Cue[] = [];
@@ -273,7 +280,8 @@ export class LiveTajweedTracker {
    * عدلة السرعة اللحظية: وسطيُ نِسَب ما قِيس من الكلمات إلى أزمنتها المتوقَّعة.
    * بغيرها يُحكم على قارئٍ سريعٍ بـ«أقصر» في كل كلمة — وهي ليست كذلك.
    */
-  private ratios: number[] = [];
+  private samples: TempoSample[] = [];
+  private prior: TempoPrior;
   private scale = 1;
 
   private results: { status: LiveWordStatus; measuredMs: number; boundary?: string }[] = [];
@@ -284,16 +292,23 @@ export class LiveTajweedTracker {
   private lastAlert: LiveAlert | null = null;
   private lastBoundary: LiveBoundary | null = null;
 
+  /**
+   * @param prior مرجع السرعة: سرعة القارئ المعتمد للمرتبة نسبةً إلى نموذجها
+   *              (انظر priorCenter) — ويُبدأ منها قبل أول كلمةٍ مقيسة.
+   */
   constructor(
     tjs: WordTajweed[],
     words: { word: string }[],
     tau: number,
     onWord: ((e: LiveWordEvent) => void) | null = null,
+    prior: TempoPrior = NEUTRAL_PRIOR,
   ) {
     this.tjs = tjs;
     this.words = tjs.map((t, i) => ({ word: words[i]?.word ?? t.word, tajweed: t }));
     this.tau = tau;
     this.onWord = onWord;
+    this.prior = prior;
+    this.scale = scaleFromSamples([], prior);
     this.results = tjs.map(() => ({ status: 'pending' as LiveWordStatus, measuredMs: 0 }));
   }
 
@@ -304,13 +319,15 @@ export class LiveTajweedTracker {
     return Math.max(60, Math.round((this.tjs[i]?.expectedMs ?? 240) * this.scale));
   }
 
-  /** نافذة الأوجه الجائزة بعدلة السرعة (قصْر/توسّط/إشباع حيث جازت) */
-  private windowOf(i: number): { minMs: number; maxMs: number } {
+  /** نافذة الأوجه الجائزة بعدلة السرعة (قصْر/توسّط/إشباع حيث جازت، ومَطّ اللازم) */
+  private windowOf(i: number): { minMs: number; maxMs: number; stretchMs?: number } {
     const t = this.tjs[i];
     if (!t) return { minMs: 60, maxMs: 600 };
+    const w = scaledWindow(t, this.scale);
     return {
-      minMs: Math.max(60, Math.round(Math.min(t.minMs ?? t.expectedMs, t.expectedMs) * this.scale)),
-      maxMs: Math.max(60, Math.round(Math.max(t.maxMs ?? t.expectedMs, t.expectedMs) * this.scale)),
+      minMs: Math.round(w.minMs),
+      maxMs: Math.round(w.maxMs),
+      ...(w.stretchMs ? { stretchMs: Math.round(w.stretchMs) } : {}),
     };
   }
 
@@ -635,7 +652,7 @@ export class LiveTajweedTracker {
       }
       if (a < 0 || a > limit) break;
       const endV = this.cues[a].v;
-      this.commitWord(absIdx, Math.max(0, endV - this.lastCommitV), this.cues[a].kind, { final });
+      this.commitWord(absIdx, Math.max(0, endV - this.lastCommitV), this.cues[a].kind, { final, cut: !!this.cues[a].cut });
       this.lastCommitV = endV;
       this.commitCueIdx = a;
       committedNow++;
@@ -802,7 +819,7 @@ export class LiveTajweedTracker {
           }
         }
       }
-      this.commitWord(idx, Math.max(0, endV - v), kind, { final: true });
+      this.commitWord(idx, Math.max(0, endV - v), kind, { final: true, cut: k === rem - 1 && this.cutAtStop });
       v = endV;
     }
     this.lastCommitV = this.voicedTotal;
@@ -815,13 +832,15 @@ export class LiveTajweedTracker {
     i: number,
     measuredRaw: number,
     boundary: LiveBoundary | 'skipped',
-    opts: { final?: boolean; quiet?: boolean; adapt?: boolean } = {},
+    opts: { final?: boolean; quiet?: boolean; adapt?: boolean; cut?: boolean } = {},
   ): void {
     if (i < 0 || i >= this.tjs.length) return;
     const measured = Math.round(measuredRaw);
     const acoustic = boundary === 'gap' || boundary === 'dip';
     const expected = this.expectedOf(i);
     const adapt = opts.adapt !== false;
+    /** نهاية الكلمة لم تُسمع (قطعها الإيقاف والصوت قائم): زمنها حدٌّ أدنى لا يُحكم منه بالقصر */
+    const cut = !!opts.cut;
 
     if (boundary === 'skipped') {
       this.results[i] = { status: 'silent', measuredMs: 0, boundary };
@@ -859,28 +878,35 @@ export class LiveTajweedTracker {
     // الكلمة نافذةَ حكمها هي — ثم تُحدَّث العدلة بها لما بعدها.
     // والكلمة المقدَّرة من النموذج لا يُقضى عليها بقصرٍ ولا بطول: زمنُها لم
     // يُقس من الصوت — ويُترك الحكم للتحليل الكامل بعد الإيقاف.
-    const status: WordStatus = acoustic
-      ? classifyWord(measured, expected, this.tau, this.windowOf(i))
+    const win = this.windowOf(i);
+    const evidence = this.samples.reduce((a, x) => a + x.weight, 0);
+    win.minMs = Math.round(lenientMin(win.minMs, this.scale, evidence, this.tjs[i].rulerWeight ?? 1));
+    let status: WordStatus = acoustic
+      ? classifyWord(measured, expected, this.tau, win)
       : measured < MIN_VOICED_MS
         ? 'silent'
         : 'ok';
+    // الكلمة المقطوعة بالإيقاف: قد تكون أطول مما سُمع — فلا «قصر» ولا «لم تُسمع»
+    // عليها، ويبقى الحكم بالطول إن جاوزت المقدار فيما سُمع منها.
+    const cutUnjudged = cut && (status === 'short' || status === 'silent') && measured > 0;
+    if (cutUnjudged) status = 'ok';
 
-    if (acoustic) {
-      if (adapt && measured >= MIN_VOICED_MS && this.tjs[i].expectedMs > 0) {
-        this.ratios.push(measured / this.tjs[i].expectedMs);
-        this.scale = scaleFromRatios(this.ratios);
+    if (acoustic && !cutUnjudged) {
+      if (adapt && !cut && measured >= MIN_VOICED_MS && this.tjs[i].expectedMs > 0) {
+        this.samples.push({ ratio: measured / this.tjs[i].expectedMs, weight: this.tjs[i].rulerWeight ?? 1 });
+        this.scale = scaleFromSamples(this.samples, this.prior);
       }
     } else {
       this.estimatedCount++;
     }
 
-    this.results[i] = { status, measuredMs: measured, boundary };
+    this.results[i] = { status, measuredMs: measured, boundary: cutUnjudged ? 'model' : boundary };
     this.doneCount++;
     if (status === 'excellent' || status === 'ok') this.okCount++;
     else this.violations++;
     this.lastBoundary = boundary;
 
-    const tip = acoustic && !opts.quiet ? liveTip(this.words[i].word, this.tjs[i], status) : null;
+    const tip = acoustic && !cutUnjudged && !opts.quiet ? liveTip(this.words[i].word, this.tjs[i], status) : null;
     if (tip) {
       this.lastAlert = {
         index: i,
@@ -899,10 +925,11 @@ export class LiveTajweedTracker {
         status,
         measuredMs: measured,
         expectedMs: expected,
-        boundary,
-        measured: acoustic,
+        boundary: cutUnjudged ? 'model' : boundary,
+        measured: acoustic && !cutUnjudged,
         final: !!opts.final,
         prefix: i < this.prefixCount,
+        ...(cut ? { cut: true } : {}),
       });
     }
   }
@@ -923,8 +950,8 @@ export class LiveTajweedTracker {
     this.okCount = 0;
     this.violations = 0;
     this.estimatedCount = 0;
-    this.ratios = [];
-    this.scale = 1;
+    this.samples = [];
+    this.scale = scaleFromSamples([], this.prior);
     this.committed = 0;
     this.lastCommitV = 0;
     this.commitCueIdx = -1;
@@ -985,7 +1012,7 @@ export class LiveTajweedTracker {
       vPrev = vEnd;
     }
     cur += SKIP_FINAL * (n - this.committed);
-    cur += TEMPO_W * Math.max(0, Math.abs(Math.log2(this.scale)) - TEMPO_FREE_OCT);
+    cur += TEMPO_W * Math.max(0, Math.abs(Math.log2(this.scale / this.prior.center)) - TEMPO_FREE_OCT);
     if (!readWords) return false;
 
     // التفسير البديل: j+1 كلمة (أكثر مما أُسند) بلا تركٍ من الوسط
@@ -999,11 +1026,13 @@ export class LiveTajweedTracker {
       cumE += Ebase[j];
       if (j < this.committed) continue;
       const s = elapsed / cumE;
-      if (s < RECONSIDER_TEMPO_MIN || s > RECONSIDER_TEMPO_MAX) continue;
+      // السرعة الضمنية تُقاس إلى سرعة القارئ المرجعي (مركز العدلة) لا إلى المرتبة الاسمية
+      const sRel = s / this.prior.center;
+      if (sRel < RECONSIDER_TEMPO_MIN || sRel > RECONSIDER_TEMPO_MAX) continue;
       const E = Ebase.slice(0, j + 1).map((e) => e * s);
       const dp = this.buildDp(E, open.V, open.kinds, open.skip, 0, false, MAX_GROUP);
       if (dp.h[j][K - 1] >= INF) continue;
-      const c = dp.h[j][K - 1] + TEMPO_W * Math.max(0, Math.abs(Math.log2(s)) - TEMPO_FREE_OCT) + SKIP_FINAL * (n - 1 - j);
+      const c = dp.h[j][K - 1] + TEMPO_W * Math.max(0, Math.abs(Math.log2(sRel)) - TEMPO_FREE_OCT) + SKIP_FINAL * (n - 1 - j);
       if (c < bestC) {
         bestC = c;
         bestJ = j;
@@ -1026,16 +1055,20 @@ export class LiveTajweedTracker {
       kind: x!.kind,
     }));
     const lastCue = plan[bestJ]!.cue;
-    // عدلة السرعة من المقاطع المقيسة (وسيطٌ صامد) — كما في التحليل الكامل
-    const ratios: number[] = [];
+    const lastCut = lastCue >= 0 && !!this.cues[lastCue]?.cut;
+    // عدلة السرعة من المقاطع المقيسة (مرجَّحةً بالمرجع) — كما في التحليل الكامل
+    const samples: TempoSample[] = [];
     segs.forEach((sg, k) => {
+      if (lastCut && k === bestJ) return;
       if ((sg.kind === 'gap' || sg.kind === 'dip') && sg.measured >= MIN_VOICED_MS && this.tjs[k].expectedMs > 0) {
-        ratios.push(sg.measured / this.tjs[k].expectedMs);
+        samples.push({ ratio: sg.measured / this.tjs[k].expectedMs, weight: this.tjs[k].rulerWeight ?? 1 });
       }
     });
-    this.ratios = ratios;
-    if (ratios.length) this.scale = scaleFromRatios(ratios);
-    segs.forEach((sg, k) => this.commitWord(k, sg.measured, sg.kind, { final: true, quiet: wasJudged[k], adapt: false }));
+    this.samples = samples;
+    this.scale = scaleFromSamples(samples, this.prior);
+    segs.forEach((sg, k) =>
+      this.commitWord(k, sg.measured, sg.kind, { final: true, quiet: wasJudged[k], adapt: false, cut: lastCut && k === bestJ }),
+    );
     this.committed = bestJ + 1;
     this.lastCommitV = plan[bestJ]!.endV;
     if (lastCue >= 0) this.commitCueIdx = lastCue;
@@ -1053,6 +1086,12 @@ export class LiveTajweedTracker {
    */
   finish(): void {
     if (this.finished) return;
+    // هل أُوقف التسجيل والقارئ ما يزال يُصوِّت؟ — كان هذا أصلَ شكوى «الكلمة الأخيرة
+    // قصيرةٌ دائمًا»: يضغط القارئ الإيقاف مع آخر حرفٍ (أو قبل أن يصل ذيلُ الصوت من
+    // الميكروفون)، فيُقطع مدُّ الكلمة الأخيرة ويُقاس ما سُمع منه على أنه كلُّه.
+    // فإن لم تُسمع بعد آخر صوتٍ سكتةٌ تُعدّ حدًّا، فنهاية الكلمة الأخيرة لم تُسمع:
+    // لا يُحكم عليها بالقصر (انظر commitWord) ويبقى الفيصلُ التحليلَ الكامل.
+    this.cutAtStop = this.started && !this.frozen && this.silenceMs < GAP_CUE_MS && this.voicedTotal > this.lastCommitV;
     // الإيقاف حدٌّ حقيقي: تُختم الإشارات بسكتةٍ عند آخر الصوت إن كان بعد آخر حدٍّ
     // حقيقي ذيلٌ يُعتدّ به (والإشارة التقديرية المستديمة ليست حدًّا حقيقيًا)
     let lastReal = this.lastCommitV;
@@ -1070,9 +1109,13 @@ export class LiveTajweedTracker {
         last.depth = 1;
         last.steady = false;
         last.v = this.voicedTotal;
+        last.cut = this.cutAtStop;
       } else {
-        this.cues.push({ v: this.voicedTotal, kind: 'gap', depth: 1, t: this.lastT });
+        this.cues.push({ v: this.voicedTotal, kind: 'gap', depth: 1, t: this.lastT, cut: this.cutAtStop });
       }
+    } else {
+      // الذيل دون حدّ الكلمة: آخر كلمةٍ انتهت عند حدٍّ مسموع قبله، فنهايتها مسموعة
+      this.cutAtStop = false;
     }
     if (this.started && !this.frozen) {
       if (this.cues.length) {
@@ -1120,6 +1163,7 @@ export class LiveTajweedTracker {
       currentExpectedMs: inWord ? this.expectedOf(cur) : 0,
       currentMinMs: inWord ? win.minMs : 0,
       currentMaxMs: inWord ? win.maxMs : 0,
+      currentStretchMs: inWord ? (win.stretchMs ?? 0) : 0,
       currentHarakat: inWord ? (this.tjs[cur]?.harakat ?? 0) : 0,
       stalledMs: Math.max(0, Math.round(stalled)),
       lastAlert: this.lastAlert && this.lastAlert.index >= P ? { ...this.lastAlert, index: this.lastAlert.index - P } : null,

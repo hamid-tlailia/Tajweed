@@ -199,11 +199,13 @@ export default function LiveCoach({
   const expMs = snapshot.currentExpectedMs;
   const minMs = snapshot.currentMinMs || expMs;
   const maxMs = Math.max(snapshot.currentMaxMs || expMs, minMs);
-  const barEnd = Math.max(maxMs * 1.18, expMs * 1.35, 240);
+  // المدّ اللازم: يُتسامح في مطّه فوق الستّ (كما يفعل القرّاء المعتمدون) — فلا «تجاوزتَ» قبله
+  const stretchMs = Math.max(snapshot.currentStretchMs || 0, maxMs);
+  const barEnd = Math.max(stretchMs * 1.1, maxMs * 1.18, expMs * 1.35, 240);
   const barPct = expMs ? Math.min(100, Math.round((100 * snapshot.currentVoicedMs) / barEnd)) : 0;
   const zoneFrom = expMs ? Math.min(99, Math.round((100 * minMs) / barEnd)) : 0;
   const zoneTo = expMs ? Math.min(100, Math.round((100 * maxMs) / barEnd)) : 0;
-  const over = expMs > 0 && snapshot.currentVoicedMs > maxMs * 1.12;
+  const over = expMs > 0 && snapshot.currentVoicedMs > stretchMs * 1.12;
   const ranged = maxMs > minMs * 1.12;
 
   const alert = snapshot.lastAlert;

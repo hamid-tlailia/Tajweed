@@ -7,7 +7,7 @@
 // ملاحظة خصوصية: هذا المسار تنزيلٌ صِرف لصوت القارئ المرجعي؛ لا يُرفَع إليه
 // ولا يُسجَّل فيه شيء من صوت المستخدم أبدًا.
 
-import { RECITERS, ayahAudioUrls } from '@/lib/reciter';
+import { autoReciter, ayahAudioUrls, reciterById } from '@/lib/reciter';
 import type { Riwayah } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -28,11 +28,16 @@ function globalAyah(surah: number, ayah: number): number {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const riwayah = (url.searchParams.get('riwayah') ?? 'hafs') as Riwayah;
+  // القارئ بمعرّفه (reciter=husary…)؛ ويُقبل riwayah وحده توافقًا مع النسخ السابقة
+  const riwayahParam = url.searchParams.get('riwayah');
+  const reciterParam = url.searchParams.get('reciter');
+  const reciter =
+    reciterById(reciterParam) ??
+    (riwayahParam === 'hafs' || riwayahParam === 'warsh' ? autoReciter(riwayahParam as Riwayah, 'tadwir') : null);
   const surah = Number(url.searchParams.get('surah'));
   const ayah = Number(url.searchParams.get('ayah'));
 
-  if (!RECITERS[riwayah] || !Number.isInteger(surah) || surah < 1 || surah > 114 || !Number.isInteger(ayah) || ayah < 1) {
+  if (!reciter || !Number.isInteger(surah) || surah < 1 || surah > 114 || !Number.isInteger(ayah) || ayah < 1) {
     return Response.json({ error: 'معاملات غير صحيحة' }, { status: 400 });
   }
   if (ayah > (AYAH_COUNTS[surah - 1] ?? 0)) {
@@ -40,7 +45,7 @@ export async function GET(req: Request) {
   }
 
   const g = globalAyah(surah, ayah);
-  const urls = ayahAudioUrls(riwayah, surah, ayah, g);
+  const urls = ayahAudioUrls(reciter, surah, ayah, g);
 
   for (const u of urls) {
     try {
@@ -56,7 +61,7 @@ export async function GET(req: Request) {
         headers: {
           'Content-Type': res.headers.get('content-type') ?? 'audio/mpeg',
           'Cache-Control': 'public, max-age=604800',
-          'X-Ref-Reciter': encodeURIComponent(RECITERS[riwayah].name),
+          'X-Ref-Reciter': encodeURIComponent(reciter.name),
         },
       });
     } catch {

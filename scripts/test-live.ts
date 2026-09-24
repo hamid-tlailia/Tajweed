@@ -405,6 +405,78 @@ console.log('\n──── تراجعات: مدّ الكلمة الأخيرة �
   check('عند الإيقاف تُقاس الكلمة بطولها كله ولا تُقطَّع', sn.words[0].measuredMs >= dur * 0.75 && sn.words.slice(1).every((w) => w.status === 'silent'), `${sn.words[0].measuredMs} م.ث`);
 }
 
+/* ================================================================== */
+/* شكوى «الكلمة الأخيرة قصيرةٌ دائمًا في المزامنة اللحظية»:            */
+/*  ١) يضغط القارئ الإيقاف مع آخر حرفٍ (أو قبل وصول ذيل الصوت) فيُقطع    */
+/*     مدُّ الكلمة الأخيرة ويُقاس ما سُمع منه على أنه كلُّه.              */
+/*  ٢) كلمةٌ أولى مُطالةٌ كانت ترفع العدلة فتُقصِّر ما بعدها — والأخيرة.   */
+/* ================================================================== */
+console.log('\n──── الكلمة الأخيرة: الإيقاف أثناء الصوت، والعدلة المرجَّحة ────');
+{
+  const W = ['ٱلۡحَمۡدُ', 'لِلَّهِ', 'رَبِّ', 'ٱلۡعَـٰلَمِينَ'];
+  const wt = analyzeTargetWords(W.map((w) => ({ word: w, ayah: 2 })), 'hafs', 'tartil');
+  const run = (lastShare: number, tailSilenceMs: number, firstMult = 1) => {
+    const ev: { index: number; status: WordStatus; cut?: boolean; final?: boolean }[] = [];
+    const trk = new LiveTajweedTracker(wt, W.map((w) => ({ word: w })), 0.8, (e) =>
+      ev.push({ index: e.index, status: e.status, cut: e.cut, final: e.final }),
+    );
+    let tt = 0;
+    const feed = (rms: number, ms: number) => {
+      for (let i = 0; i < Math.max(1, Math.round(ms / 10)); i++, tt += 10) trk.feed(rms, tt);
+    };
+    feed(0.0005, 300);
+    for (let w = 0; w < W.length; w++) {
+      const mult = w === 0 ? firstMult : w === W.length - 1 ? lastShare : 1;
+      feed(0.3, Math.round(wt[w].expectedMs * mult));
+      if (w < W.length - 1) feed(0.0005, 140);
+    }
+    if (tailSilenceMs) feed(0.0005, tailSilenceMs);
+    trk.finish();
+    return { sn: trk.snapshot(), ev };
+  };
+  // أوقف التسجيل وهو يُتمّ المدّ (سُمع ٦٠٪ منه فقط): لا يُحكم عليه بالقصر
+  const cut = run(0.6, 0);
+  const last = cut.sn.words[3];
+  check('الإيقاف أثناء صوت الكلمة الأخيرة: لا «قصر» عليها', last.status !== 'short' && last.status !== 'silent', `${last.status} (${last.measuredMs} م.ث)`);
+  check('…ويُعلَم أنها قُطعت بالإيقاف (لا حكمَ لحظيًّا عليها)', cut.ev.some((e) => e.index === 3 && e.cut), JSON.stringify(cut.ev.filter((e) => e.index === 3)));
+  check('…ولا تُحسب مخالفةً في العدّاد', cut.sn.violations === 0, `${cut.sn.violations}`);
+  // وأما من أتمّ ثم سكت ثم أوقف: فالكلمة الأخيرة مقيسةٌ كاملةً ويُحكم عليها كغيرها
+  const whole = run(1, 400);
+  check('الكلمة الأخيرة تامّةً ثم سكوتٌ ثم إيقاف: «في المقدار»', ['ok', 'excellent'].includes(whole.sn.words[3].status), whole.sn.words[3].status);
+  const truly = run(0.3, 400);
+  check('وكلمةٌ أخيرة ناقصةٌ حقًّا ثم سكوت: «أقصر» (لا يُعفى المقصِّر)', truly.sn.words[3].status === 'short', truly.sn.words[3].status);
+  // كلمةٌ أولى أطالها القارئ ضعفين ونصفًا: لا ترفع العدلةَ فتُقصِّر الأخيرة
+  const longFirst = run(1, 400, 2.5);
+  check('كلمةٌ أولى مُطالة لا تُقصِّر الكلمة الأخيرة', ['ok', 'excellent'].includes(longFirst.sn.words[3].status), longFirst.sn.words.map((w) => w.status).join(' · '));
+}
+{
+  // مرجع السرعة: يبدأ المتتبِّع من سرعة القارئ المعتمد (لا من المرتبة الاسمية)
+  const W = ['قُلۡ', 'هُوَ', 'ٱللَّهُ', 'أَحَدٌ'];
+  const wt = analyzeTargetWords(W.map((w) => ({ word: w, ayah: 1 })), 'hafs', 'hadr');
+  const trk = new LiveTajweedTracker(wt, W.map((w) => ({ word: w })), 0.8, null, { center: 1.18 });
+  let tt = 0;
+  for (let i = 0; i < 40; i++, tt += 10) trk.feed(0.0005, tt);
+  for (let i = 0; i < 20; i++, tt += 10) trk.feed(0.3, tt);
+  const sn = trk.snapshot();
+  check('المرافقة تبدأ بسرعة القارئ المرجعي', Math.abs(sn.currentExpectedMs - Math.round(wt[0].expectedMs * 1.18)) <= 1, `${sn.currentExpectedMs} مقابل ${wt[0].expectedMs}`);
+}
+{
+  // الٓمٓ حيًّا: من قرأها كلمةً (٠٫٩ ث) حدرًا تُحكم «أقصر»، ومن مدّها بمقدارها لا تُخطَّأ
+  const W = ['الۤمۤ'];
+  const wt = analyzeTargetWords(W.map((w) => ({ word: w, ayah: 1 })), 'hafs', 'hadr');
+  const say = (ms: number) => {
+    const trk = new LiveTajweedTracker(wt, W.map((w) => ({ word: w })), 0.8, null, { center: 1.18 });
+    let tt = 0;
+    for (let i = 0; i < 30; i++, tt += 10) trk.feed(0.0005, tt);
+    for (let i = 0; i < ms / 10; i++, tt += 10) trk.feed(0.3, tt);
+    for (let i = 0; i < 40; i++, tt += 10) trk.feed(0.0005, tt);
+    trk.finish();
+    return trk.snapshot().words[0].status;
+  };
+  check('الٓمٓ حيًّا في ٠٫٩ ث حدرًا: «أقصر»', say(900) === 'short', say(900));
+  check('الٓمٓ حيًّا بمقدارها (٣٫١ ث): لا تُخطَّأ', ['ok', 'excellent'].includes(say(3100)), say(3100));
+}
+
 if (fails) {
   console.error(`\nFAILED: ${fails}`);
   process.exit(1);
