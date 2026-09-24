@@ -169,14 +169,28 @@ export interface AyahRecord {
   at: number;
 }
 
+export type TextCheck = 'ok' | 'weak' | 'mismatch' | 'unverified' | 'demo';
+
 export interface AlignmentResult {
   targetKey: string;
   targetLabel: string;
   engine: EngineId;
   transcript: string;
-  transcriptMatch: number; // 0..1 — captured target words ratio
+  transcriptMatch: number; // 0..1 — درجة مطابقة النصّ (F1 على الكلمات) أو تغطية الصوت
   matchSource: 'transcript' | 'coverage' | 'demo';
   predWords: { word: string; ok: boolean }[];
+  /**
+   * بوّابة النصّ — هل قُرئت **هذه** الآية؟
+   *   ok         تبيّن نصّ الآية في المسموع (يجوز الاجتياز)
+   *   weak       تبيّن بعضُه فقط (نصفُ آية، أو سماعٌ رديء) — لا اجتياز
+   *   mismatch   المسموع بعيدٌ عن الآية (كلامٌ آخر أو آيةٌ أخرى) — لا اجتياز
+   *   unverified لم يُستمع بالألفاظ (نتيجةٌ لحظية، أو تعذّر السماع الذكي) — لا اجتياز
+   *   demo       عرضٌ تجريبي
+   */
+  textCheck: TextCheck;
+  /** نسبة كلمات الآية التي سُمعت / نسبة المسموع الذي من الآية (عند السماع بالألفاظ) */
+  textRecall?: number;
+  textPrecision?: number;
   overallScore: number; // 0..100
   verdict: string;
   durationMs: number;

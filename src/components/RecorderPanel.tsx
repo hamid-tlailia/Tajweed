@@ -156,7 +156,8 @@ export default function RecorderPanel() {
     setLive(null);
     trackerRef.current = new LiveTajweedTracker(tjs, target.words, tau, (e) => {
       const { alertOn: alerts } = useTahqiq.getState();
-      if (alerts && (e.status === 'short' || e.status === 'long' || e.status === 'silent')) {
+      // الأحكام الختامية (عند الإيقاف) تُعرض ولا تُهزّ: القارئ ضغط الإيقاف لتوّه
+      if (!e.final && alerts && (e.status === 'short' || e.status === 'long' || e.status === 'silent')) {
         wordViolation(e.status);
       }
       const t = trackerRef.current;

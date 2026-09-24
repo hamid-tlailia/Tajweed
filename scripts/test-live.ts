@@ -12,9 +12,9 @@ function check(name: string, cond: boolean, extra = '') {
 const WORDS = ['ٱلۡحَمۡدُ', 'لِلَّهِ', 'رَبِّ', 'ٱلۡعَـٰلَمِينَ'];
 const tjs = analyzeWords(WORDS, 'hafs', 'tartil');
 
-const events: { index: number; status: WordStatus; measuredMs: number }[] = [];
+const events: { index: number; status: WordStatus; measuredMs: number; final?: boolean }[] = [];
 const tr = new LiveTajweedTracker(tjs, WORDS.map((w) => ({ word: w })), 0.8, (e) =>
-  events.push({ index: e.index, status: e.status, measuredMs: e.measuredMs }),
+  events.push({ index: e.index, status: e.status, measuredMs: e.measuredMs, final: e.final }),
 );
 
 // تيار الطاقة: 20 م.ث لكل نبضة تغذية
@@ -40,13 +40,14 @@ tr.finish(); // الكلمة 4 لم تُقرأ
 const snap = tr.snapshot();
 
 check('بدأت الجلسة بعد أول صوت', snap.started);
-check('أُقفلت ٣ كلمات', snap.doneCount === 3, `${snap.doneCount}`);
+check('حُكم على الكلمات الأربع (لا كلمة بلا حكم بعد الإيقاف)', snap.doneCount === 4, `${snap.doneCount}`);
 check('الكلمة ١ في المقدار (ok/excellent)', ['ok', 'excellent'].includes(snap.words[0].status), snap.words[0].status);
 check('الكلمة ٢ أقصر (short)', snap.words[1].status === 'short', snap.words[1].status);
 check('الكلمة ٣ أطول (long)', snap.words[2].status === 'long', snap.words[2].status);
-check('الكلمة ٤ بقيت معلَّقة (pending)', snap.words[3].status === 'pending', String(snap.words[3].status));
-check('مخالفَتان محسوبتان', snap.violations === 2, `${snap.violations}`);
-check('أُطلقت ٣ أحداث كلمات', events.length === 3, `${events.length}`);
+check('الكلمة ٤ لم تُقرأ → «لم تُسمع» لا «معلَّقة»', snap.words[3].status === 'silent', String(snap.words[3].status));
+check('ثلاث مخالفات محسوبة (قصر، طول، ترك)', snap.violations === 3, `${snap.violations}`);
+check('أُطلقت ٤ أحداث كلمات', events.length === 4, `${events.length}`);
+check('حكم الكلمة المتروكة موسومٌ ختاميًّا (لا اهتزاز له)', events[3]?.final === true && !events[0]?.final, `${events[3]?.final}`);
 check('تنبيه المخالفة يحمل شرحًا', !!snap.lastAlert && snap.lastAlert.action.length > 10, snap.lastAlert?.title ?? '—');
 check('اللقطة مُنهية بعد finish()', snap.finished);
 check('لا كلمة جارية بعد الانتهاء', snap.currentExpectedMs === 0);
@@ -67,8 +68,20 @@ const s3mid = tr3.snapshot();
 check('النغمة المستديمة لا تُقطَّع قبل حدّها', s3mid.doneCount === 0, `${s3mid.doneCount}`);
 tr3.finish();
 const s3 = tr3.snapshot();
-check('النغمة المستديمة تُحسب كلمةً واحدة ممدودة', s3.doneCount === 1, `${s3.doneCount} · ${s3.words[0]?.status}`);
-check('وتُحكم أطول من المقدار', s3.words[0]?.status === 'long', String(s3.words[0]?.status));
+check(
+  'النغمة المستديمة تُحسب كلمةً واحدة ممدودة (لا تُوزَّع على كلماتٍ وهمية)',
+  s3.words[0]?.status === 'long' && s3.words.slice(1).every((w) => w.status === 'silent'),
+  s3.words.map((w) => w.status).join(' · '),
+);
+check('وتُقاس بطولها كله', (s3.words[0]?.measuredMs ?? 0) >= 7000, `${s3.words[0]?.measuredMs}`);
+
+// إيقافٌ بلا قراءة: لا يُحكم على شيء («معلَّقة» لا «لم تُسمع»)
+const tr4 = new LiveTajweedTracker(tjs, WORDS.map((w) => ({ word: w })), 0.8);
+let t4 = 0;
+for (let i = 0; i < 60; i++, t4 += 20) tr4.feed(0.001, t4);
+tr4.finish();
+const s4 = tr4.snapshot();
+check('الإيقاف بلا قراءة يترك الكلمات معلَّقة', s4.doneCount === 0 && s4.words.every((w) => w.status === 'pending'), `${s4.doneCount}`);
 
 /* ================================================================== */
 /* التلاوة المتصلة: لا سكتة بين الكلمات — وهو ما كان يُوقف الإصدار الأول */
@@ -183,6 +196,105 @@ console.log('\n──── المدّ الممسوك ────');
     !!second && Math.abs(second.measuredMs - held) / held < 0.25,
     `${second?.measuredMs} مقابل ${held}`,
   );
+}
+
+/* ================================================================== */
+/* القارئ الأسرع من مرتبته: كانت الكلمة الأخيرة تبقى بلا حكم           */
+/* ================================================================== */
+{
+  // مقاطع مصطنعة: نبضاتٌ لكل مقطع، وحافّة هابطة في آخر الكلمة
+  function synth(
+    words: string[],
+    mult: number,
+    gapMs: number,
+    tailMs: number,
+  ): { snap: ReturnType<LiveTajweedTracker['snapshot']>; ev: { index: number; status: WordStatus; final?: boolean }[] } {
+    const wt = analyzeWords(words, 'hafs', 'tartil');
+    const ev: { index: number; status: WordStatus; final?: boolean }[] = [];
+    const trk = new LiveTajweedTracker(wt, words.map((w) => ({ word: w })), 0.8, (e) =>
+      ev.push({ index: e.index, status: e.status, final: e.final }),
+    );
+    let tt = 0;
+    const dt = 10;
+    const feed = (rms: number, ms: number) => {
+      for (let i = 0; i < Math.max(1, Math.round(ms / dt)); i++, tt += dt) trk.feed(rms, tt);
+    };
+    feed(0.0005, 300);
+    words.forEach((_, w) => {
+      const D = Math.round(wt[w].expectedMs * mult);
+      const syl = Math.max(2, Math.round(D / 260));
+      for (let sI = 0; sI < syl; sI++) {
+        const steps = Math.max(1, Math.round(D / syl / dt));
+        for (let k = 0; k < steps; k++) {
+          const p = k / steps;
+          const hump = 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, p * 1.15));
+          const edge = sI === syl - 1 && p > 0.72 ? 1 - ((p - 0.72) / 0.28) * 0.68 : 1;
+          feed(Math.max(0.002, 0.42 * hump * edge), dt);
+        }
+      }
+      if (w < words.length - 1 && gapMs > 0) feed(0.0008, gapMs);
+    });
+    if (tailMs > 0) feed(0.0005, tailMs);
+    trk.finish();
+    return { snap: trk.snapshot(), ev };
+  }
+  const judged = (st: WordStatus | 'current') => st !== 'pending' && st !== 'current';
+  const W2 = ['ٱلرَّحۡمَـٰنِ', 'ٱلرَّحِیمِ'];
+  const W3 = ['مَـٰلِكِ', 'یَوۡمِ', 'ٱلدِّینِ'];
+  const W4 = ['ٱلۡحَمۡدُ', 'لِلَّهِ', 'رَبِّ', 'ٱلۡعَـٰلَمِينَ'];
+
+  for (const [label, words, mult, gap, tail] of [
+    ['كلمتان ×٠٫٦ متصلتان ثم صمت', W2, 0.6, 0, 400],
+    ['كلمتان ×٠٫٦ بسكتات ثم إيقاف فوري', W2, 0.6, 80, 0],
+    ['كلمتان ×٠٫٥ متصلتان ثم صمت', W2, 0.5, 0, 400],
+    ['ثلاث ×٠٫٦ متصلة ثم صمت (مراجعة الدمج)', W3, 0.6, 0, 400],
+    ['ثلاث ×٠٫٥ بسكتات ثم صمت', W3, 0.5, 80, 400],
+    ['أربع ×٠٫٦ متصلة ثم صمت', W4, 0.6, 0, 400],
+    ['أربع ×٠٫٥ بسكتات ثم إيقاف فوري', W4, 0.5, 80, 0],
+    ['أربع ×١٫٤ متصلة (أبطأ من المرتبة)', W4, 1.4, 0, 400],
+    ['أربع ×١ بسكتات', W4, 1, 120, 300],
+  ] as const) {
+    const { snap: sn } = synth([...words], mult, gap, tail);
+    const last = sn.words[sn.words.length - 1];
+    check(
+      `${label}: كل الكلمات محكومة والأخيرة مسموعة`,
+      sn.words.every((w) => judged(w.status)) && last.status !== 'silent' && last.status !== 'pending',
+      sn.words.map((w) => w.status).join(' · '),
+    );
+  }
+  // القارئ الأسرع لا يُحكم على كلماته بالقصر كلِّها بعد أن تتبيّن سرعته
+  {
+    const { snap: sn } = synth([...W4], 0.6, 80, 300);
+    const shorts = sn.words.filter((w) => w.status === 'short').length;
+    check('القارئ الأسرع ×٠٫٦: بعد الكلمة الأولى تتكيّف العدلة (لا يُقصَّر الباقي)', shorts <= 1, `${shorts} قصيرة`);
+  }
+  // التوقّف المبكّر مع مقاطع حقيقية: ما لم يُقرأ «لم يُسمع» ولا تُخترع قراءة
+  {
+    const wt = analyzeWords([...W4], 'hafs', 'tartil');
+    const ev: { index: number; status: WordStatus }[] = [];
+    const trk = new LiveTajweedTracker(wt, W4.map((w) => ({ word: w })), 0.8, (e) => ev.push({ index: e.index, status: e.status }));
+    let tt = 0;
+    const feed = (rms: number, ms: number) => {
+      for (let i = 0; i < Math.round(ms / 10); i++, tt += 10) trk.feed(rms, tt);
+    };
+    feed(0.0005, 300);
+    for (let w = 0; w < 2; w++) {
+      feed(0.3, wt[w].expectedMs);
+      feed(0.0005, 150);
+    }
+    feed(0.0005, 400);
+    trk.finish();
+    const sn = trk.snapshot();
+    check(
+      'قراءة كلمتين من أربع ثم توقّف: الكلمتان الأخيرتان «لم تُسمعا»',
+      ['ok', 'excellent'].includes(sn.words[0].status) &&
+        ['ok', 'excellent'].includes(sn.words[1].status) &&
+        sn.words[2].status === 'silent' &&
+        sn.words[3].status === 'silent',
+      sn.words.map((w) => w.status).join(' · '),
+    );
+    check('عدّاد المقروء يعكس ذلك', sn.doneCount === 4 && sn.okCount === 2, `${sn.doneCount}/${sn.okCount}`);
+  }
 }
 
 if (fails) {

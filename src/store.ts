@@ -417,9 +417,10 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
     if (!result.demo && scope === 'ayah' && useReciterGate) {
       const ref = refCache[`${selectedSurahId}:${selectedAyah}:${riwayah}:${tempo}`];
       if (ref) {
-        const textOk = result.matchSource !== 'transcript' || result.transcriptMatch >= 0.4;
-        const cmp = compareWithReciter(result.words, ref, tau, textOk, ref.label);
-        if (cmp) final = { ...result, reciter: cmp, passed: cmp.passed };
+        // بوّابة النصّ واحدة في البابين: لا يُجيز التوقيتُ (ولا مطابقةُ القارئ) نصًّا لم يتبيّن
+        const textOk = result.textCheck === 'ok' || result.textCheck === 'demo';
+        const cmp = compareWithReciter(result.words, ref, tau, textOk, ref.label, result.textCheck);
+        if (cmp) final = { ...result, reciter: cmp, passed: cmp.passed && textOk };
       }
     }
 

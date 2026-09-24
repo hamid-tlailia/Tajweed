@@ -3,7 +3,7 @@
 // Fallback: bundled offline copy (public/surahs.json + public/quran.json)
 
 import type { SurahData, SurahMeta, TargetSpec } from './types';
-import { normalizeArabic } from './tajweed';
+import { normalizeForMatch } from './match';
 
 async function getJson(url: string, timeoutMs = 8000): Promise<any> {
   const ctl = new AbortController();
@@ -74,7 +74,11 @@ export function buildTarget(data: SurahData, scope: 'ayah' | 'surah', ayah: numb
   };
 }
 
-/** Normalized (tashkeel-stripped) target text for the whisper decoder */
+/**
+ * نصّ الآية للمطابقة النصّية: بالتوحيد الإملائيّ (الألف الخنجرية → ألف …) لا
+ * بـ`normalizeArabic` وحده — فذاك يُسقط الألف الخنجرية فتصير «العالمين» «العلمين»
+ * ولا تُطابق ما يُخرجه السماع الآلي.
+ */
 export function targetTextOf(target: TargetSpec): string {
-  return target.words.map((w) => normalizeArabic(w.word)).join(' ');
+  return target.words.map((w) => normalizeForMatch(w.word)).join(' ');
 }

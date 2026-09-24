@@ -165,7 +165,14 @@ export default function LiveCoach({
       ) : (
         <div className="mt-3 rounded-xl border border-dashed border-line/80 bg-ink-850/40 px-3.5 py-3 text-center text-[11px] text-slate-400">
           {snapshot.finished
-            ? `انتهت الجلسة الحية — ${snapshot.doneCount} كلمة قُرئت و${snapshot.violations} مخالفة لحظية. التحليل الكامل في تبويب النتيجة.`
+            ? (() => {
+                const heard = snapshot.words.filter((w) => w.status !== 'pending' && w.status !== 'silent').length;
+                const unheard = snapshot.words.filter((w) => w.status === 'silent').length;
+                const timing = snapshot.violations - unheard;
+                return `انتهت الجلسة الحية — سُمعت ${heard} من ${n} كلمة${unheard ? `، و${unheard} لم تُسمع` : ''}${
+                  timing > 0 ? `، و${timing} مخالفة زمنية لحظية` : ''
+                }. التحليل الكامل في تبويب النتيجة.`;
+              })()
             : upcomingWord
               ? <>
                   الكلمة التالية: <span className="font-quran text-lg text-gold-200">{upcomingWord.word}</span>

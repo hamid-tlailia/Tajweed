@@ -4,7 +4,7 @@
 // تربط الحكم (مد/غنة/قلقلة…) بفعلٍ واضح.
 
 import { stripTashkeel } from './tajweed';
-import type { CoachTip, WordAlignment, WordStatus } from './types';
+import type { CoachTip, TextCheck, WordAlignment, WordStatus } from './types';
 import { PASS_SCORE } from './types';
 import type { WordTajweed } from './types';
 
@@ -103,12 +103,60 @@ function tipFor(w: WordAlignment): CoachTip | null {
   return liveTip(w.word, w.tajweed, w.status, w.index);
 }
 
+/** بوّابة النصّ كما تصل من التحليل (انظر AlignmentResult.textCheck) */
+export interface TextGateInfo {
+  textCheck: TextCheck;
+  recall?: number;
+  precision?: number;
+  /** كلمات الآية التي لم تتبيّن في المسموع (وإن مرّت البوّابة) */
+  missing?: string[];
+}
+
+/**
+ * جملة بوّابة النصّ للخلاصة — لماذا لم يُعتمد النصّ، وماذا يفعل القارئ.
+ * تُميّز بين: كلامٍ آخر، وآيةٍ أخرى/زيادةٍ عليها، وبعض الآية، وسماعٍ لم يجرِ.
+ */
+export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: number): string | null {
+  const pct = Math.round(transcriptMatch * 100);
+  const recall = info.recall ?? 0;
+  const precision = info.precision ?? 0;
+  const heard = Math.round(recall * n);
+  switch (info.textCheck) {
+    case 'ok':
+    case 'demo':
+      return null;
+    case 'unverified':
+      return (
+        'لم يُتحقَّق من نصّ التلاوة بعد (قِيست الأزمنة وحدها) — الاجتياز لا يُعتمد إلا بعد السماع الذكي: ' +
+        'جهّزه من «الإعدادات» أو اضغط «إعادة تقييم».'
+      );
+    case 'weak':
+      if (precision >= 0.6 && recall < 0.6) {
+        return `سُمع بعضُ الآية فقط (${heard} من ${n} كلمة، تطابق ${pct}٪) — أكمل الآية كلَّها ليُعتمد الاجتياز.`;
+      }
+      return (
+        `تبيّن بعضُ نصّ الآية فقط (تطابق ${pct}٪) — اقرأ الآية كاملةً بوضوحٍ وقربٍ من الميكروفون، ` +
+        'وإن تكرّر ذلك فجرّب النموذج «الأدقّ» من الإعدادات.'
+      );
+    case 'mismatch':
+    default:
+      if (recall >= 0.6 && precision < 0.4) {
+        return `سُمع نصُّ الآية ومعه زيادةٌ كثيرة عليه (تطابق ${pct}٪) — اقرأ الآية المختارة وحدها.`;
+      }
+      return (
+        `ما سُمع من الألفاظ ليس نصَّ هذه الآية (تطابق ${pct}٪) — لعلّك قرأت آيةً غيرها أو كلامًا آخر. ` +
+        'اقرأ الآية المختارة كما هي؛ فالأزمنة لا تُحتسب لنصٍّ غيرها.'
+      );
+  }
+}
+
 export function buildCoach(
   words: WordAlignment[],
   score: number,
   transcriptMatch: number,
   matchSource: 'transcript' | 'coverage' | 'demo',
   tempoScale = 1,
+  text: TextGateInfo = { textCheck: matchSource === 'demo' ? 'demo' : matchSource === 'coverage' ? 'unverified' : 'ok' },
 ): { tips: CoachTip[]; summary: string; passed: boolean } {
   const tips = words.map(tipFor).filter((x): x is CoachTip => !!x);
   const n = words.length || 1;
@@ -116,6 +164,7 @@ export function buildCoach(
   const short = words.filter((w) => w.status === 'short').length;
   const long = words.filter((w) => w.status === 'long').length;
   const good = words.filter((w) => w.status === 'excellent' || w.status === 'ok').length;
+  const textOk = text.textCheck === 'ok' || text.textCheck === 'demo';
 
   /**
    * بابٌ ثانٍ للاجتياز غير الدرجة: فالدرجةُ متوسِّطٌ، ومتوسِّطٌ قد يرتفع
@@ -127,11 +176,33 @@ export function buildCoach(
   const fault = short + long + Math.round(2.5 * silent);
   const allowedFault = Math.max(1, Math.round(n / 3));
   const withinFault = fault <= allowedFault;
-  const passed = score >= PASS_SCORE && withinFault;
+  const timingPassed = score >= PASS_SCORE && withinFault;
+  /**
+   * والبابُ الأول قبل ذلك كلِّه: أن يكون المقروءُ هو الآية. فلا تُجاز تلاوةٌ
+   * لم يُسمع نصُّها أو سُمع فخالف — مهما حسُنت أزمنتُها.
+   */
+  const passed = timingPassed && textOk;
 
   const parts: string[] = [];
-  if (passed) {
+  const gateMsg = textGateMessage(text, transcriptMatch, n);
+  if (!textOk) {
+    if (gateMsg) parts.push(gateMsg);
+    if (text.textCheck === 'unverified') {
+      parts.push(
+        timingPassed
+          ? `أزمنتك لحظيًّا حسنة (${score}%، ${good} من ${n} كلمة في المقدار) — وتُعتمد بعد التحقّق من النصّ.`
+          : `وأزمنتك لحظيًّا ${score}%: ${good} من ${n} كلمة في المقدار.`,
+      );
+      if (tips[0]) parts.push(`ابدأ بإصلاح: ${tips[0].action}`);
+    } else if (text.textCheck === 'weak' && tips[0]) {
+      parts.push(`ومن جهة الأزمنة ابدأ بإصلاح: ${tips[0].action}`);
+    }
+  } else if (passed) {
     parts.push(`أحسنت — ${score}% درجة جيدة. ${good} من ${n} كلمة في المقدار.`);
+    if (text.missing?.length) {
+      const list = text.missing.slice(0, 3).map((w) => `«${displayWord(w)}»`).join('، ');
+      parts.push(`غير أن ${text.missing.length === 1 ? 'كلمة' : 'كلمات'} ${list} لم تتبيّن في المسموع كما في المصحف — تحقّق من نطقها.`);
+    }
     if (tips.length) parts.push(`بقيَت ${tips.length} ملاحظة خفيفة راجعها قبل الآية التالية.`);
     else parts.push('لا ملاحظات على الأزمنة. انتقل للآية التالية متى شئت.');
   } else if (score >= PASS_SCORE) {
@@ -152,18 +223,13 @@ export function buildCoach(
     else parts.push('أعد التلاوة أوضح وأقرب من الميكروفون، وراجع مرتبة القراءة (حدر/تدوير/ترتيل).');
   }
 
-  if (tempoScale && (tempoScale < 0.82 || tempoScale > 1.22)) {
+  // ملاحظة السرعة لا معنى لها إن لم يكن المقروء هو الآية
+  if (textOk && tempoScale && (tempoScale < 0.82 || tempoScale > 1.22)) {
     const dir = tempoScale < 1 ? 'أسرع' : 'أبطأ';
     parts.push(
       `قراءتك ${dir} من مرتبتك المختارة بنحو ${tempoScale.toFixed(2)}× — قِيسَتْ أحكامُك بعدلة سرعتك،` +
         ` والأزمنة المعروضة لك هي أزمنة مرتبتك أنت. قرِّب سرعتك من المرتبة المختارة ليصفو القياس.`,
     );
-  }
-
-  if (matchSource === 'coverage') {
-    parts.push('السماع الذكي لم يميّز نصّ الآية، فاعتُمدت تغطية الكلمات المسموعة. إن أمكن جهّز السماع الأدقّ.');
-  } else if (transcriptMatch < 0.45 && matchSource === 'transcript') {
-    parts.push('ما سُمع من الألفاظ ابتعد عن نصّ الآية — تأكّد أنك تقرأ الآية المختارة دون زيادة أو نقص.');
   }
 
   return { tips, summary: parts.join(' '), passed };
