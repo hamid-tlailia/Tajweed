@@ -299,6 +299,15 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   }
 
   const textOk = textCheck === 'ok' || textCheck === 'demo';
+
+  // لكل كلمة: هل تبيّن لفظُها؟ — كانت الكلمة تُوسم «جيد» بزمنها وحده ولو لم يُسمع
+  // من التلاوة لفظٌ من الآية أصلًا. فما لم يُسمع لا يُحكم على زمنه ولا يُنصح فيه.
+  if (textCheck === 'mismatch' || (textCheck === 'weak' && heardNothing)) {
+    for (const w of alignWords) w.textHeard = false;
+  } else if (matchSource === 'transcript' && scored) {
+    const miss = new Set(scored.missing.map((m) => m.index));
+    for (const w of alignWords) w.textHeard = !miss.has(w.index);
+  }
   const asrOk = matchSource === 'transcript' && textOk;
   let overallScore = Math.round(100 * (asrOk ? 0.4 * meanConf + 0.6 * meanTj : 0.2 * meanConf + 0.8 * meanTj));
   if (textCheck === 'weak' || textCheck === 'mismatch') {

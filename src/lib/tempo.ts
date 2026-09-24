@@ -99,7 +99,12 @@ export function estimateTempo(samples: TempoSample[], prior: TempoPrior = NEUTRA
 /** مركز المرجع من سرعة القارئ المعتمد ونموذج المرتبة (مع حدٍّ يمنع الشطط) */
 export function priorCenter(referencePace: number | null | undefined, tempoScale: number): number {
   if (!referencePace || !(tempoScale > 0)) return 1;
-  return clamp(referencePace / tempoScale, 0.7, 1.6);
+  const r = referencePace / tempoScale;
+  // قارئٌ من غير مرتبة المستخدم (الحصري مرتِّلًا ومن اختار الحدر): سرعتُه ليست
+  // مسطرةً لهذه المرتبة — كانت تُحدّ عند ×١٫٦ فيُطالَب الحادر بمدودٍ أطول من الحدر.
+  // فالمسطرة حينئذٍ نموذجُ المرتبة نفسه، ويبقى القارئ مرجعَ المقارنة كلمةً كلمة.
+  if (r < 0.75 || r > 1.4) return 1;
+  return r;
 }
 
 /**

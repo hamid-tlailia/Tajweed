@@ -82,7 +82,14 @@ const statusMap: Record<WordStatus, { t: string; c: string }> = {
   silent: { t: 'لم يُسمع', c: 'border-danger-500/50 bg-danger-500/15 text-danger-300' },
 };
 
-export function StatusBadge({ status }: { status: WordStatus }) {
+export function StatusBadge({ status, unheard = false }: { status: WordStatus; unheard?: boolean }) {
+  if (unheard) {
+    return (
+      <span className="inline-flex rounded-md border border-line bg-ink-800/60 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+        لم يُسمع لفظُها
+      </span>
+    );
+  }
   const s = statusMap[status];
   return <span className={`inline-flex rounded-md border px-2 py-0.5 text-[10px] font-medium ${s.c}`}>{s.t}</span>;
 }

@@ -51,7 +51,7 @@ export const RECITER_LIST: ReciterProfile[] = [
     name: 'عبد الرحمن السديس',
     riwayah: 'hafs',
     style: 'murattal',
-    autoFor: ['hadr'],
+    autoFor: [],
     pace: 0.65,
     templates: [
       'https://everyayah.com/data/Abdurrahmaan_As-Sudais_192kbps/{s3}{a3}.mp3',
@@ -87,7 +87,7 @@ export const RECITER_LIST: ReciterProfile[] = [
     name: 'مشاري العفاسي',
     riwayah: 'hafs',
     style: 'murattal',
-    autoFor: ['tadwir'],
+    autoFor: [],
     pace: 0.81,
     templates: [
       'https://everyayah.com/data/Alafasy_128kbps/{s3}{a3}.mp3',
@@ -107,15 +107,39 @@ export const RECITER_LIST: ReciterProfile[] = [
     ],
   },
   {
+    // المرجعُ التلقائي لمراتب المرتَّل كلها: شيخُ المقارئ المصرية، وأول من سجّل المصحف
+    // المرتَّل كاملًا برواية حفص مراجَعًا من لجنةٍ أزهرية — وتلاوتُه أصلٌ في التعليم.
+    // (سرعتُه سرعةُ الترتيل: فإن اختير الحدر أو التدوير كانت مسطرةُ السرعة نموذجَ المرتبة،
+    // وقُورنت أزمنةُ كلماتِه بعد ضبط سرعتها — انظر priorCenter.)
     id: 'husary',
     name: 'محمود خليل الحصري',
     riwayah: 'hafs',
     style: 'murattal',
-    autoFor: ['tartil'],
+    autoFor: ['hadr', 'tadwir', 'tartil'],
     pace: 1.19,
     templates: [
       'https://everyayah.com/data/Husary_128kbps/{s3}{a3}.mp3',
       'https://everyayah.com/data/Husary_64kbps/{s3}{a3}.mp3',
+    ],
+  },
+  {
+    id: 'husary-muallim',
+    name: 'محمود خليل الحصري (المصحف المعلِّم)',
+    riwayah: 'hafs',
+    style: 'murattal',
+    autoFor: [],
+    pace: null,
+    templates: ['https://everyayah.com/data/Husary_Muallim_128kbps/{s3}{a3}.mp3'],
+  },
+  {
+    id: 'minshawi',
+    name: 'محمد صديق المنشاوي (مرتَّل)',
+    riwayah: 'hafs',
+    style: 'murattal',
+    autoFor: [],
+    pace: null,
+    templates: [
+      'https://everyayah.com/data/Minshawy_Murattal_128kbps/{s3}{a3}.mp3',
     ],
   },
   // ——— حفص عن عاصم · مجوَّد ———

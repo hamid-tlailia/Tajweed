@@ -275,6 +275,21 @@ export class LiveTajweedTracker {
   private committed = 0;
   /** كلمات أُسندت ولم يُبتّ فيها بعد (تنتظر التريّث) */
   private pendingAssigned = 0;
+  /**
+   * ما يتقدّم به **الضوء المعروض** على المُبتَّت: كلماتٌ أُسندت إلى حدٍّ مسموع
+   * حقيقي (سكتة أو انخفاض — لا تقدير النموذج) ولم يُبتّ حكمُها بعد. كان الضوء
+   * مربوطًا بالمُبتَّت وحده، والبتّ ينتظر حدًّا بعد الكلمة (تريّث) — فكان يتخلّف
+   * عن القارئ كلمةً ثم يقفز كلماتٍ دفعةً واحدة. الآن يسير معه: الكلمة التي
+   * انتهى صوتُها تُطفأ، والتي بعدها تُضاء — والحكم يلحق بعد التريّث.
+   */
+  private displayAhead = 0;
+  /** الزمن المصوّت عند نهاية آخر كلمةٍ تقدّم عليها الضوء */
+  private displayEndV = 0;
+  /**
+   * كلماتٌ من الآية أثبت السماعُ الذكي أثناء التسجيل أنها قُرئت (بالترتيب):
+   * لا يتخلّف الضوء عنها وإن لم يُسمع لها حدٌّ في الطاقة (قراءةٌ متصلة).
+   */
+  private asrHeard = 0;
 
   /**
    * عدلة السرعة اللحظية: وسطيُ نِسَب ما قِيس من الكلمات إلى أزمنتها المتوقَّعة.
@@ -613,10 +628,10 @@ export class LiveTajweedTracker {
   }
 
   /** استرجاع الإسناد من الجدول: لكل كلمةٍ حتى bestJ فهرسُ إشارة نهايتها (مطلقًا) أو SKIPMARK */
-  private backtrack(bk: number[][], bestJ: number, open: OpenCues): number[] {
+  private backtrack(bk: number[][], bestJ: number, open: OpenCues, endI = open.K - 1): number[] {
     const assign: number[] = new Array(bestJ + 1).fill(-9);
     let j = bestJ;
-    let i = open.K - 1;
+    let i = endI;
     while (j >= 0 && i >= 0) {
       const b = bk[j][i];
       if (b === SKIPMARK) {
@@ -700,10 +715,53 @@ export class LiveTajweedTracker {
       this.pendingAssigned = 0;
       return;
     }
-    const assign = this.backtrack(pick.bk, pick.bestJ, open);
+    if (pick.bestJ < 0) {
+      // الكلمة الأولى المنتظرة ما تزال تُقرأ: لا كلمة تمّت منذ آخر حكم
+      this.pendingAssigned = 0;
+      this.updateDisplay([]);
+      this.markCurrent();
+      return;
+    }
+    const assign = this.backtrack(pick.bk, pick.bestJ, open, pick.endI);
     const committedNow = this.commitAssigned(assign, open, false);
     this.pendingAssigned = Math.max(0, pick.bestJ + 1 - committedNow);
+    this.updateDisplay(assign.slice(committedNow));
     this.markCurrent();
+  }
+
+  /**
+   * تقدّم الضوء المعروض: ما أُسند (ولم يُبتّ) إلى حدٍّ مسموعٍ حقيقي، وقد بلغ
+   * زمنُه نصفَ أدنى أوجهه على الأقل — فانخفاضٌ عابرٌ في أول الكلمة لا يُطفئها.
+   */
+  private updateDisplay(pending: number[]): void {
+    let ahead = 0;
+    let prevV = this.lastCommitV;
+    for (const a of pending) {
+      if (a < 0 || !this.cues[a]) break; // كلمةٌ متروكة أو بلا إشارة
+      const cue = this.cues[a];
+      if (cue.kind === 'model' || cue.steady) break;
+      const idx = this.committed + ahead;
+      if (cue.v - prevV < 0.5 * this.windowOf(idx).minMs) break;
+      prevV = cue.v;
+      ahead++;
+    }
+    this.displayAhead = ahead;
+    this.displayEndV = prevV;
+  }
+
+  /**
+   * السماع الذكي أثناء التسجيل أثبت أن أول `count` كلمة من الآية قد قُرئت —
+   * فلا يتخلّف الضوء عنها (المرافقة بالطاقة وحدها قد لا تجد حدًّا في التلاوة المتصلة).
+   */
+  noteHeard(count: number): void {
+    if (this.finished || this.frozen) return;
+    this.asrHeard = Math.max(this.asrHeard, Math.max(0, Math.floor(count)));
+  }
+
+  /** الكلمة التي يُضاء عليها الآن (بفهرس القائمة كاملةً، بما فيها البادئة) */
+  private displayIdx(): number {
+    const n = this.tjs.length;
+    return clamp(Math.max(this.committed + this.displayAhead, this.prefixCount + this.asrHeard), 0, n);
   }
 
   /**
@@ -722,16 +780,41 @@ export class LiveTajweedTracker {
    *              وأثناء التلاوة: ما بعد الجبهة «لم يأتِ بعد» بلا كلفة، ويبقى
    *              شرطُ التغطية الجزئية (الكلمة الجارية قد تكون في وسطها).
    */
-  private pickFrontier(open: OpenCues, W: number, final: boolean): { bestJ: number; bk: number[][] } | null {
+  private pickFrontier(
+    open: OpenCues,
+    W: number,
+    final: boolean,
+  ): { bestJ: number; bk: number[][]; endI: number } | null {
     const { K, v0, V, kinds, skip } = open;
     const E: number[] = new Array(W);
     for (let j = 0; j < W; j++) E[j] = this.expectedOf(this.committed + j);
     const elapsed = V[K - 1] - v0;
+    const skipSum = new Array<number>(K + 1).fill(0);
+    for (let i = 0; i < K; i++) skipSum[i + 1] = skipSum[i] + skip[i];
+    /**
+     * كلفة «الكلمة التالية ما تزال تُقرأ»: الإشارات بعد آخر كلمةٍ تمّت داخلَ
+     * الكلمة الجارية (مقاطعُها: إطباقُ حرفٍ شديد، أو انخفاضٌ بين مقطعين) — فتُتجاهل
+     * بكلفتها، ويُحاسَب المقطع الجاري إن جاوز مقدار الكلمة بيّنًا (كان ينبغي أن يُرى
+     * حدُّها). كان كلُّ انخفاضٍ جديد يُعدّ نهايةَ كلمةٍ حتمًا، فيسبق الضوءُ القارئ
+     * مقطعًا مقطعًا ويُحكم على الكلمات قبل تمامها.
+     */
+    const partialCost = (fromI: number, nextE: number): number => {
+      const start = fromI < 0 ? v0 : V[fromI];
+      const L = V[K - 1] - start;
+      const over = nextE > 0 ? Math.max(0, L - nextE * 1.2) / Math.max(80, nextE) : 0;
+      return skipSum[K] - skipSum[fromI + 1] + clamp(over, 0, 4);
+    };
 
     const INF = 1e9;
     let bestJ = -1;
     let bestC = INF;
     let bestBk: number[][] | null = null;
+    let bestI = K - 1;
+    // لم تتمّ كلمةٌ بعد: الأولى المنتظرة تُقرأ منذ آخر حكم
+    if (!final) {
+      bestC = partialCost(-1, E[0]);
+      bestBk = [];
+    }
     let cumE = 0;
     for (let j = 0; j < W; j++) {
       cumE += E[j];
@@ -739,16 +822,35 @@ export class LiveTajweedTracker {
       const s = elapsed > 60 ? clamp(elapsed / cumE, TEMPO_MIN, TEMPO_MAX) : 1;
       const Ej = E.slice(0, j + 1).map((e) => e * s);
       const { h, bk } = this.buildDp(Ej, V, kinds, skip, v0);
-      if (h[j][K - 1] >= INF) continue;
       const tempoPen = Math.max(0, Math.abs(Math.log2(s)) - TEMPO_FREE_OCT);
-      const c = h[j][K - 1] + TEMPO_W * tempoPen + (final ? SKIP_FINAL * (W - 1 - j) : 0);
-      if (c < bestC) {
-        bestC = c;
-        bestJ = j;
-        bestBk = bk;
+      if (h[j][K - 1] < INF) {
+        const c = h[j][K - 1] + TEMPO_W * tempoPen + (final ? SKIP_FINAL * (W - 1 - j) : 0);
+        if (c < bestC) {
+          bestC = c;
+          bestJ = j;
+          bestBk = bk;
+          bestI = K - 1;
+        }
+      }
+      if (final || j + 1 >= W) continue;
+      // الكلمات 0..j تمّت عند إشارةٍ سابقة، والكلمة j+1 تُقرأ الآن (بسرعةٍ تفترض نصفها)
+      const sp = elapsed > 60 ? clamp(elapsed / (cumE + 0.5 * E[j + 1]), TEMPO_MIN, TEMPO_MAX) : 1;
+      const Ep = E.slice(0, j + 1).map((e) => e * sp);
+      const dpP = this.buildDp(Ep, V, kinds, skip, v0);
+      const penP = Math.max(0, Math.abs(Math.log2(sp)) - TEMPO_FREE_OCT);
+      for (let i = Math.max(0, K - 1 - MAX_LOOKBACK); i < K - 1; i++) {
+        if (dpP.h[j][i] >= INF) continue;
+        const c = dpP.h[j][i] + TEMPO_W * penP + partialCost(i, E[j + 1] * sp);
+        if (c < bestC) {
+          bestC = c;
+          bestJ = j;
+          bestBk = dpP.bk;
+          bestI = i;
+        }
       }
     }
-    return bestJ >= 0 && bestBk ? { bestJ, bk: bestBk } : null;
+    if (!bestBk) return null;
+    return { bestJ, bk: bestBk, endI: bestI };
   }
 
   /**
@@ -961,6 +1063,8 @@ export class LiveTajweedTracker {
     this.lastCommitV = 0;
     this.commitCueIdx = -1;
     this.pendingAssigned = 0;
+    this.displayAhead = 0;
+    this.displayEndV = 0;
     this.pendingDip = null;
     this.dipMs = 0;
     this.dipTroughE = Infinity;
@@ -1147,23 +1251,40 @@ export class LiveTajweedTracker {
      * زمنُ الكلمة الجارية يُقاس من آخر حدٍّ مُبتَّت (lastCommitV) لا من
      * آخر إشارةٍ قد تكون تقديريةً متقدّمة.
      */
-    const cur = clamp(this.committed, 0, Math.max(0, n - 1));
+    const shown = this.finished || this.frozen ? this.committed : this.displayIdx();
+    const cur = clamp(shown, 0, Math.max(0, n - 1));
     const win = this.windowOf(cur);
     const stalled = this.started && !this.finished && this.lastVoiceT ? this.lastT - this.lastVoiceT : 0;
-    const inPrefix = this.committed < P && this.started && !this.finished;
-    const inWord = this.committed < n && this.committed >= P && this.started && !this.finished && !this.frozen;
-    const curV = this.voicedTotal - this.lastCommitV;
+    const inPrefix = shown < P && this.started && !this.finished;
+    const inWord = shown < n && shown >= P && this.started && !this.finished && !this.frozen;
+    // زمن الكلمة المضاءة: من نهاية الكلمة التي قبلها (مُبتَّتةً أو متقدَّمًا عليها بحدٍّ حقيقي)
+    const fromV =
+      shown === this.committed
+        ? this.lastCommitV
+        : shown === this.committed + this.displayAhead
+          ? this.displayEndV
+          : this.lastCueV();
+    const curV = this.voicedTotal - fromV;
     // العدّادات لكلمات الآية وحدها (لا البادئة)
     const vis = this.results.slice(P);
     const judged = (st: LiveWordStatus) => st !== 'pending' && st !== 'current';
+    // الكلمات التي تقدّم عليها الضوء ولم يُبتّ حكمُها بعد: «قُرئت» (الحكم يلحق)
+    const words = vis.map((r, k) => {
+      const win = this.windowOf(k + P);
+      const base =
+        !this.finished && k + P >= this.committed && k + P < shown && (r.status === 'pending' || r.status === 'current')
+          ? { status: 'read' as LiveWordStatus, measuredMs: 0 }
+          : { ...r };
+      return { ...base, expectedMs: this.expectedOf(k + P), minMs: win.minMs, maxMs: win.maxMs };
+    });
     return {
-      cursor: this.committed - P,
+      cursor: shown - P,
       started: this.started,
       doneCount: vis.filter((r) => judged(r.status)).length,
       okCount: vis.filter((r) => r.status === 'ok' || r.status === 'excellent').length,
       violations: vis.filter((r) => r.status === 'short' || r.status === 'long' || r.status === 'silent').length,
       estimatedCount: vis.filter((r) => r.boundary === 'model' && judged(r.status)).length,
-      words: vis.map((r) => ({ ...r })),
+      words,
       currentVoicedMs: inWord ? Math.max(0, Math.round(curV)) : 0,
       currentExpectedMs: inWord ? this.expectedOf(cur) : 0,
       currentMinMs: inWord ? win.minMs : 0,

@@ -212,7 +212,8 @@ export function buildCoach(
   /** سرعة القارئ نسبةً إلى القارئ المرجعي (انظر tempo.ts) — إن لم تُمرَّر عُدّت tempoScale نفسها */
   pace?: { relative: number; anchored: boolean; refName?: string },
 ): { tips: CoachTip[]; summary: string; passed: boolean } {
-  const tips = words.map(tipFor).filter((x): x is CoachTip => !!x);
+  // لا نصيحة في زمن كلمةٍ لم يُسمع لفظُها — فليس زمنُها زمنَها
+  const tips = words.filter((w) => w.textHeard !== false).map(tipFor).filter((x): x is CoachTip => !!x);
   const n = words.length || 1;
   const silent = words.filter((w) => w.status === 'silent').length;
   const short = words.filter((w) => w.status === 'short').length;

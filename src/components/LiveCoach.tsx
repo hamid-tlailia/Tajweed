@@ -15,7 +15,35 @@ function chipClass(status: string): string {
   if (status === 'excellent' || status === 'ok') return 'border-mint-500/50 bg-mint-500/10 text-slate-100';
   if (status === 'short' || status === 'long') return 'border-warn-500/60 bg-warn-500/15 text-warn-300 shake-error';
   if (status === 'silent') return 'border-danger-500/60 bg-danger-500/15 text-danger-300 pulse-miss';
-  return 'border-line/70 bg-ink-850/50 text-slate-500';
+  if (status === 'read') return 'border-line bg-ink-850/70 text-slate-200';
+  // لم يصل إليها القارئ بعد: باهتةٌ حتى يبلغها صوتُه
+  return 'border-line/50 bg-ink-850/30 text-slate-500 opacity-45';
+}
+
+/** أبرز أحكام الكلمة (للعرض تحتها) */
+function mainRule(tj: WordTajweed | undefined): string | null {
+  if (!tj) return null;
+  return tj.maddType ?? tj.ghunnaType ?? null;
+}
+
+/**
+ * خطّ الزمن تحت الكلمة: المنطقة الخضراء أوجهُها الجائزة، والشريط زمنُ صوتك فيها —
+ * للجارية يمتدّ مع صوتك، وللمحكوم عليها ما قِيس منها.
+ */
+function WordLine({ ms, minMs, maxMs, tone }: { ms: number; minMs: number; maxMs: number; tone: 'live' | 'ok' | 'warn' | 'bad' }) {
+  const end = Math.max(maxMs * 1.3, minMs * 1.5, 200);
+  const pct = (v: number) => Math.min(100, Math.max(0, (100 * v) / end));
+  const bar =
+    tone === 'ok' ? 'bg-mint-500' : tone === 'warn' ? 'bg-warn-500' : tone === 'bad' ? 'bg-danger-500' : 'bg-gradient-to-l from-gold-500 to-mint-500';
+  return (
+    <span className="relative mt-1 block h-1 w-full overflow-hidden rounded-full bg-ink-700/80" aria-hidden>
+      <span
+        className="absolute inset-y-0 bg-mint-500/30"
+        style={{ insetInlineStart: `${pct(minMs)}%`, width: `${Math.max(2, pct(maxMs) - pct(minMs))}%` }}
+      />
+      <span className={`absolute inset-y-0 start-0 rounded-full transition-[width] duration-100 ${bar}`} style={{ width: `${pct(ms)}%` }} />
+    </span>
+  );
 }
 
 /**
@@ -341,22 +369,40 @@ export default function LiveCoach({
       )}
 
       {/* الكلمات: تُضاء وتُحكم لحظيًا (نافذة متحرّكة للمقاطع الطويلة) */}
-      <div className="mt-3 flex max-h-[168px] flex-wrap gap-1.5 overflow-y-auto">
+      <div className="mt-3 flex max-h-[220px] flex-wrap items-start gap-1.5 overflow-y-auto">
         {(() => {
           const focus = inWord || upcomingIdx >= 0 ? Math.max(0, cur) : 0;
           const from = n > MAX_CHIPS ? Math.max(0, Math.min(n - MAX_CHIPS, focus - Math.floor(MAX_CHIPS / 3))) : 0;
           const to = Math.min(n, from + MAX_CHIPS);
           const chips: ReactNode[] = [];
           for (let i = from; i < to; i++) {
-            const st = snapshot.words[i]?.status ?? 'pending';
+            const sw = snapshot.words[i];
+            const st = sw?.status ?? 'pending';
             const isCur = i === cur && inWord;
+            const judged = st === 'ok' || st === 'excellent' || st === 'short' || st === 'long' || st === 'silent';
+            const rule = mainRule(tjs[i]);
+            const minW = sw?.minMs ?? tjs[i]?.minMs ?? 0;
+            const maxW = sw?.maxMs ?? tjs[i]?.maxMs ?? 0;
             chips.push(
               <span
                 key={i}
                 ref={isCur ? curRef : undefined}
-                className={`rounded-lg border px-2.5 py-1 font-quran text-[17px] leading-none transition ${chipClass(isCur ? 'current' : st)}`}
+                className={`inline-flex min-w-[3.2rem] flex-col items-stretch rounded-lg border px-2.5 pb-1 pt-1.5 transition ${chipClass(isCur ? 'current' : st)}`}
               >
-                {words[i].word}
+                <span className="text-center font-quran text-[17px] leading-none">{words[i].word}</span>
+                {isCur ? (
+                  <WordLine ms={snapshot.currentVoicedMs} minMs={minMs} maxMs={maxMs} tone="live" />
+                ) : judged ? (
+                  <WordLine
+                    ms={sw?.measuredMs ?? 0}
+                    minMs={minW}
+                    maxMs={maxW}
+                    tone={st === 'silent' ? 'bad' : st === 'short' || st === 'long' ? 'warn' : 'ok'}
+                  />
+                ) : null}
+                {rule && (isCur || judged || st === 'read') ? (
+                  <span className="mt-0.5 block text-center font-brand text-[8.5px] leading-tight text-gold-300/80">{rule}</span>
+                ) : null}
               </span>,
             );
           }

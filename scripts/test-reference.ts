@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 import { runAlignment } from '../src/lib/alignment';
 import { buildTarget, stripSurahBasmala } from '../src/lib/quran';
 import { autoReciter, ayahAudioUrls, recitersFor, resolveReciter } from '../src/lib/reciter';
+import { TEMPO_SCALE } from '../src/lib/tajweed';
+import { priorCenter } from '../src/lib/tempo';
 import { refKey, useTahqiq } from '../src/store';
 import type { AlignmentResult, RefAlignment, SurahData } from '../src/lib/types';
 
@@ -15,13 +17,15 @@ function check(name: string, cond: boolean, extra = '') {
 }
 
 console.log('════════ ١) الاختيار التلقائي بحسب الرواية والمرتبة ونوع التلاوة ════════');
-check('حفص · حدر ← السديس', autoReciter('hafs', 'hadr').id === 'sudais', autoReciter('hafs', 'hadr').name);
-check('حفص · تدوير ← العفاسي', autoReciter('hafs', 'tadwir').id === 'alafasy', autoReciter('hafs', 'tadwir').name);
+check('حفص · حدر ← الحصري (قارئٌ معتمد للتعليم)', autoReciter('hafs', 'hadr').id === 'husary', autoReciter('hafs', 'hadr').name);
+check('حفص · تدوير ← الحصري', autoReciter('hafs', 'tadwir').id === 'husary', autoReciter('hafs', 'tadwir').name);
 check('حفص · ترتيل ← الحصري', autoReciter('hafs', 'tartil').id === 'husary', autoReciter('hafs', 'tartil').name);
 check('حفص · مجوَّد ← عبد الباسط مجوَّدًا', autoReciter('hafs', 'tartil', 'mujawwad').id === 'abdulbasit-mujawwad');
 check('ورش · تدوير ← ياسين الجزائري', autoReciter('warsh', 'tadwir').id === 'yassin-warsh');
 check('ورش · مجوَّد (غير متاح) ← يعود إلى المرتَّل', autoReciter('warsh', 'tartil', 'mujawwad').riwayah === 'warsh');
-check('سرعات القرّاء مرتّبة بالمراتب (السديس أسرع من العفاسي أسرع من الحصري)', (autoReciter('hafs', 'hadr').pace ?? 0) < (autoReciter('hafs', 'tadwir').pace ?? 0) && (autoReciter('hafs', 'tadwir').pace ?? 0) < (autoReciter('hafs', 'tartil').pace ?? 0));
+check('الحصري مرجعًا للحدر: المسطرة نموذجُ الحدر لا سرعةُ الترتيل', priorCenter(1.19, TEMPO_SCALE.hadr) === 1);
+check('الحصري مرجعًا للترتيل: المسطرة سرعتُه', Math.abs(priorCenter(1.19, TEMPO_SCALE.tartil) - 1.19) < 1e-9);
+check('المنشاوي مرتَّلًا والحصري المعلِّم في القائمة', !!recitersFor('hafs', 'murattal').find((r) => r.id === 'minshawi') && !!recitersFor('hafs', 'murattal').find((r) => r.id === 'husary-muallim'));
 const picked = resolveReciter('hafs', 'hadr', 'murattal', 'husary');
 check('اختيار المستخدم مقدَّمٌ على التلقائي', picked.reciter.id === 'husary' && !picked.auto);
 const wrong = resolveReciter('warsh', 'hadr', 'murattal', 'husary');
