@@ -32,12 +32,27 @@ export interface QuranCorpus {
   byTrigram: Map<string, Set<string>>;
 }
 
+/** آيةٌ مرشَّحة من المصحف مع تفصيل مطابقتها للمسموع */
+export interface CorpusHit {
+  surahId: number;
+  surahName: string;
+  ayah: number;
+  /** F1 بين الاستدعاء والدقّة (0..1) */
+  match: number;
+  /** كم من كلمات هذه الآية سُمع */
+  recall: number;
+  /** كم من المسموع هو من هذه الآية */
+  precision: number;
+  /** عدد كلماتها التي سُمعت */
+  hits: number;
+}
+
 export interface SpeechIdentity {
   kind: 'target' | 'quran' | 'speech' | 'unknown';
   /** مطابقة المسموع لنصّ الآية المختارة (0..1) */
   targetMatch: number;
   /** أقرب آيةٍ أخرى إن وُجدت */
-  best?: { surahId: number; surahName: string; ayah: number; match: number };
+  best?: CorpusHit;
 }
 
 let corpusPromise: Promise<QuranCorpus> | null = null;
@@ -162,7 +177,7 @@ export function identifyInCorpus(
   corpus: QuranCorpus,
   tokens: string[],
   opts: { top?: number; minCount?: number; isTarget?: (surahId: number, ayah: number) => boolean } = {},
-): { surahId: number; surahName: string; ayah: number; match: number }[] {
+): CorpusHit[] {
   const top = opts.top ?? 16;
   if (!tokens.length || !corpus.ayahs.length) return [];
   const heard = tokens.join(' ');
@@ -175,7 +190,7 @@ export function identifyInCorpus(
   for (let i = 0; i < counts.length; i++) if (counts[i] >= minCount) cand.push(i);
   cand.sort((a, b) => counts[b] - counts[a]);
 
-  const out: { surahId: number; surahName: string; ayah: number; match: number }[] = [];
+  const out: CorpusHit[] = [];
   for (const idx of cand.slice(0, Math.max(top * 3, 30))) {
     const a = corpus.ayahs[idx];
     if (opts.isTarget && opts.isTarget(a.surahId, a.ayah)) continue;
@@ -186,6 +201,9 @@ export function identifyInCorpus(
       surahName: surahDisplayName(corpus.surahName.get(a.surahId) ?? `سورة ${a.surahId}`),
       ayah: a.ayah,
       match: sc.match,
+      recall: sc.recall,
+      precision: sc.precision,
+      hits: sc.targetHit.filter(Boolean).length,
     });
     if (out.length >= top * 2) break;
   }
@@ -213,10 +231,27 @@ export function classifyUtterance(
   const hits = identifyInCorpus(corpus, tokens, { isTarget: opts.isTarget, top: 8 });
   const best = hits[0];
   const bm = best?.match ?? 0;
+  /**
+   * «آيةٌ أخرى» لا تُدّعى بتشابهٍ عدديٍّ وحده: فجملةٌ عادية من ستّ كلمات قد
+   * تشارك آيةً قصيرةً ثلاثَ كلمات («أنا ذاهب إلى السوق» و«إنّي ذاهبٌ إلى ربّي»)
+   * فتبلغ F1 = ٠٫٥، وكان يُقال للقارئ «المقروء آيةٌ أخرى: سورة كذا» وهو لم
+   * يقرأ قرآنًا أصلًا. فلا بدّ أن يكون المسموع **أكثرَه من تلك الآية** (استدعاءٌ
+   * عالٍ) وأن تكون **أكثرُه منها** (دقّةٌ معقولة) وكلمتان على الأقل — وإلا فهي
+   * مشاركةُ ألفاظٍ شائعة لا روايةُ آية.
+   */
+  const readsAsAyah =
+    !!best && bm >= 0.45 && best.recall >= 0.65 && best.precision >= 0.45 && best.hits >= 2;
+  /**
+   * شبهةُ رواية: أكثرُ المسموع من آيةٍ واحدة لكن دون اليقين (سماعٌ رديء، أو نصفُ
+   * آيةٍ أخرى) — فلا يُقال «كلامٌ عاديّ» (فلعلّه قرآن) ولا «آيةٌ أخرى» (فلم يثبت).
+   * على ١٠ جُملٍ عربية عادية لم تبلغ جملةٌ هذا الحدّ، وعلى ٢٠٠ تلاوةٍ محرفة
+   * بالضجيج لم تنزل عنه تلاوة.
+   */
+  const maybeAyah = !!best && best.recall >= 0.55 && best.precision >= 0.5 && best.hits >= 2;
   let kind: SpeechIdentity['kind'];
   if (targetMatch >= 0.5 && targetMatch >= bm - 0.05) kind = 'target';
-  else if (bm >= 0.45 && bm > targetMatch + 0.1) kind = 'quran';
-  else if (Math.max(targetMatch, bm) < 0.3) kind = 'speech';
+  else if (readsAsAyah && bm > targetMatch + 0.1) kind = 'quran';
+  else if (targetMatch < 0.3 && !maybeAyah) kind = 'speech';
   else kind = 'unknown';
   return { kind, targetMatch, best: bm > 0 ? best : undefined };
 }
