@@ -254,6 +254,183 @@ export async function decodeBlobTo16k(blob: Blob): Promise<Float32Array> {
   return rendered.getChannelData(0);
 }
 
+/* ------------------------------------------------------------------ */
+/* كشف الكلام: هل في التسجيل صوتُ إنسانٍ فعلًا؟                        */
+/* ------------------------------------------------------------------ */
+/*
+ * عتبةُ الصوت/الصمت في `alignment.vadThreshold` **نسبيةٌ** بالضرورة (لتعمل مع
+ * تسجيلٍ هادئ وآخر صاخب)، وهي لذلك تُخذل في تسجيلٍ ليس فيه إلا ضجيجُ الغرفة:
+ * تصير «أرضيةُ الضجيج» نفسها مقياسَ «الكلام»، فيُعدّ الضجيجُ كلُّه صوتًا، ثم
+ * يُوزَّع على كلمات الآية بأوزان أزمنتها المتوقَّعة، فتخرج أزمنةُ الكلمات
+ * مطابقةً للمتوقَّع — وتُجاز تلاوةٌ لم يُقرأ فيها حرف.
+ *
+ * لذلك يُقاس هنا دليلٌ على **كلام الإنسان من بنية الصوت** لا من مستواه: فالمصوَّتُ
+ * من الكلام دوريٌّ (نبرةٌ بين ٧٠ و٤٠٠ هرتز)، وذروةُ ارتباطه الذاتيّ **قمةٌ
+ * ناتئة** عند زمن النبرة يسبقها انخفاض. وأمّا ضجيجُ الغرفة (ولو رفعه التضخيمُ
+ * التلقائيّ في الهاتف) فارتباطُه يضمحلّ اضمحلالًا رتيبًا بلا قمة، والهمهمةُ
+ * الكهربائيّة دوريةٌ لكن بلا ناتئ (لا يسبقها انخفاض)، والصمتُ التامّ لا إطارات
+ * فيه أصلًا. فلا يُعدّ شيءٌ من ذلك كلامًا، ولو ملأ التسجيلَ كلَّه.
+ */
+
+/** قياس ظهور الكلام في تسجيل: كم منه صوت، وكم من هذا الصوت كلامُ إنسان */
+export interface SpeechPresence {
+  /** الزمن الذي جاوز عتبة الصوت النسبية (م.ث) — كما يقيسه محرّك المحاذاة */
+  voicedMs: number;
+  /** الزمن الذي يشبه كلام الإنسان بنيَةً لا مستوىً فحسب (م.ث) */
+  speechMs: number;
+  /** speechMs ÷ voicedMs (٠ إن لم يُسمع صوت) */
+  speechRatio: number;
+  /** أعلى مستوى إطارٍ بوحدة ديسيبل بالنسبة إلى المدى الكامل (dBFS) */
+  peakDb: number;
+  /** تباين مستويات الإطارات المسموعة بالديسيبل (الكلام ≥ ٦، والضجيج المستوي ≈ ٠) */
+  modulationDb: number;
+  /** أعلى ارتباطٍ ذاتيّ (وسيط الإطارات المُحلَّلة) — المصوَّت ≥ ٠٫٤ والضجيج ≈ ٠٫١٥ */
+  harmonicity: number;
+  /** هل في التسجيل كلامُ إنسانٍ بيّن؟ */
+  hasSpeech: boolean;
+  /** علّة الحكم — تُذكر في النتيجة وفي الاختبارات */
+  reason: 'speech' | 'silent' | 'noise' | 'faint';
+}
+
+/** طول إطار قياس الكلام (م.ث) — كإطارات الطاقة في المحاذاة */
+export const SPEECH_FRAME_MS = 20;
+/** أدنى مستوى إطارٍ يُنظر في بنيته (≈ −٥٥ dBFS): دونه صمتٌ في كل جهاز */
+const SPEECH_ABS_FLOOR = 0.0018;
+/** أدنى ارتباطٍ ذاتيٍّ يُعدّ مصوَّتًا (الضجيج الأبيض ≈ ٠٫١٥ والورديّ ≈ ٠٫٣٩) */
+const SPEECH_MIN_AC = 0.4;
+/** وأدنى نتوءٍ لتلك الذروة: الضجيج يضمحلّ رتيبًا (نتوء ≈ ٠٫١) والهممةُ لا يسبقها انخفاض */
+const SPEECH_MIN_PROMINENCE = 0.3;
+/** مدى النبرة المقاس (عيّنات عند ١٦ كهرتز): ٧٠–٤٠٠ هرتز */
+const AC_LAG_LO = 34; // نحو ٤٧٠ هرتز: يسع صوت المرأة والطفل
+const AC_LAG_HI = 228;
+/** أدنى زمن كلامٍ يُعدّ ظهورًا له (م.ث) */
+const SPEECH_MIN_MS = 300;
+/** وأدنى نسبةٍ من الصوت المسموع (فالحروف المهموسة والسكتات ليست مصوَّتة) */
+const SPEECH_MIN_RATIO = 0.15;
+/** أدنى مستوى ذروةٍ (dBFS) — صمتٌ رفَعَه التضخيم يبقى دونه غالبًا */
+const SPEECH_MIN_PEAK_DB = -52;
+/** أقصى عدد إطاراتٍ يُحلَّل طيفها الزمنيّ (التسجيلات الطوال: عيّنةٌ منها) */
+const SPEECH_MAX_ANALYZED = 1200;
+
+/**
+ * قياس ظهور الكلام في التسجيل. لا يُغني عن عتبة الصوت النسبية في المحاذاة،
+ * بل يُجيب سؤالًا آخر: **هل تكلّم أحدٌ أصلًا؟**
+ */
+export function speechPresence(samples: Float32Array, frameMs = SPEECH_FRAME_MS): SpeechPresence {
+  const sr = 16000;
+  const frame = Math.max(1, Math.round((sr * frameMs) / 1000));
+  const nFrames = Math.floor(samples.length / frame);
+  const none: SpeechPresence = {
+    voicedMs: 0,
+    speechMs: 0,
+    speechRatio: 0,
+    peakDb: -Infinity,
+    modulationDb: 0,
+    harmonicity: 0,
+    hasSpeech: false,
+    reason: 'silent',
+  };
+  if (!nFrames) return none;
+
+  // مستويات الإطارات أولًا (ومنها العتبة النسبية، كما في المحاذاة تمامًا)
+  const rms = new Float32Array(nFrames);
+  let peak = 0;
+  for (let i = 0; i < nFrames; i++) {
+    let s = 0;
+    const start = i * frame;
+    for (let j = 0; j < frame; j++) {
+      const v = samples[start + j] ?? 0;
+      s += v * v;
+    }
+    const r = Math.sqrt(s / frame);
+    rms[i] = r;
+    if (r > peak) peak = r;
+  }
+  const peakDb = 20 * Math.log10(Math.max(peak, 1e-9));
+
+  const sorted = Float32Array.from(rms).sort();
+  const avg = (a: number, b: number) => {
+    const lo = Math.max(0, Math.floor(a));
+    const hi = Math.min(nFrames, Math.max(lo + 1, Math.ceil(b)));
+    let s = 0;
+    for (let i = lo; i < hi; i++) s += sorted[i];
+    return s / (hi - lo);
+  };
+  const noiseFloor = avg(0, nFrames * 0.05);
+  const speechLevel = avg(nFrames * 0.7, nFrames * 0.95);
+  const relThr = Math.max(Math.min(Math.max(noiseFloor * 3, speechLevel * 0.15), speechLevel * 0.5), 1e-5);
+
+  const candidates: number[] = [];
+  const dbOfVoiced: number[] = [];
+  let voicedFrames = 0;
+  for (let i = 0; i < nFrames; i++) {
+    if (rms[i] < relThr) continue;
+    voicedFrames++;
+    dbOfVoiced.push(20 * Math.log10(Math.max(rms[i], 1e-9)));
+    if (rms[i] >= SPEECH_ABS_FLOOR) candidates.push(i);
+  }
+  // تسجيلٌ طويل: تُحلَّل عيّنةٌ متباعدة من الإطارات المرشَّحة
+  const stride = candidates.length > SPEECH_MAX_ANALYZED ? Math.ceil(candidates.length / SPEECH_MAX_ANALYZED) : 1;
+
+  let speechFrames = 0;
+  let analyzed = 0;
+  const acValues: number[] = [];
+  for (let k = 0; k < candidates.length; k += stride) {
+    const s = candidates[k] * frame;
+    let e0 = 0;
+    for (let j = 0; j < frame; j++) {
+      const v = samples[s + j] ?? 0;
+      e0 += v * v;
+    }
+    if (e0 <= 1e-12) continue;
+    analyzed++;
+    // الارتباط الذاتيّ المطبَّع في مدى النبرة، وأدنى قيمةٍ قبل الذروة (نتوءُها)
+    let bestLag = -1;
+    let bestVal = -2;
+    const r: number[] = new Array(AC_LAG_HI + 1).fill(0);
+    for (let lag = 1; lag <= AC_LAG_HI; lag++) {
+      let num = 0;
+      let e1 = 0;
+      for (let j = 0; j + lag < frame; j++) {
+        const a = samples[s + j] ?? 0;
+        const b = samples[s + j + lag] ?? 0;
+        num += a * b;
+        e1 += b * b;
+      }
+      r[lag] = num / Math.sqrt(e0 * Math.max(e1, 1e-12));
+      if (lag >= AC_LAG_LO && r[lag] > bestVal) {
+        bestVal = r[lag];
+        bestLag = lag;
+      }
+    }
+    if (bestLag < 0) continue;
+    acValues.push(bestVal);
+    let dip = 2;
+    for (let lag = Math.max(1, bestLag - 30); lag < bestLag; lag++) dip = Math.min(dip, r[lag]);
+    if (bestVal >= SPEECH_MIN_AC && bestVal - dip >= SPEECH_MIN_PROMINENCE) speechFrames++;
+  }
+
+  const speechMs = speechFrames * stride * frameMs;
+  const voicedMs = voicedFrames * frameMs;
+  const speechRatio = voicedFrames > 0 ? Math.min(1, (speechFrames * stride) / voicedFrames) : 0;
+  const harmonicity = acValues.length ? acValues.sort((a, b) => a - b)[acValues.length >> 1] : 0;
+  let modulationDb = 0;
+  if (dbOfVoiced.length > 4) {
+    const m = dbOfVoiced.reduce((a, b) => a + b, 0) / dbOfVoiced.length;
+    modulationDb = Math.sqrt(dbOfVoiced.reduce((a, b) => a + (b - m) * (b - m), 0) / dbOfVoiced.length);
+  }
+
+  const hasSpeech = speechMs >= SPEECH_MIN_MS && speechRatio >= SPEECH_MIN_RATIO && peakDb >= SPEECH_MIN_PEAK_DB;
+  const reason: SpeechPresence['reason'] = hasSpeech
+    ? 'speech'
+    : voicedMs <= 0
+      ? 'silent'
+      : peakDb < SPEECH_MIN_PEAK_DB
+        ? 'faint'
+        : 'noise';
+  return { voicedMs, speechMs, speechRatio, peakDb, modulationDb, harmonicity, hasSpeech, reason };
+}
+
 /** RMS energy envelope at 40ms frames (= Whisper encoder frame rate, 25 fps) */
 export function energyEnvelope(samples: Float32Array, frameMs = 40): Float32Array {
   const sr = 16000;

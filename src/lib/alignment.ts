@@ -5,7 +5,7 @@
 //   2. whisper-energy — Whisper transcription (similarity) + energy-peak forced alignment
 //   3. offline-dtw    — pure in-browser energy/DTW-style forced alignment (no AI, always works)
 
-import { energyEnvelope } from './audio';
+import { energyEnvelope, speechPresence } from './audio';
 import { buildCoach } from './coach';
 import { ayahLabel, classifyUtterance, loadCorpus, utteranceTokens } from './corpus';
 import { editClose, normalizeForMatch, scoreTranscriptMatch, textCheckOf } from './match';
@@ -68,6 +68,8 @@ const FRAME_MS = 20;
 const MIN_VOICED_MS = 70;
 /** أدنى عرضٍ يبقى للكلمة عند فضّ تداخل الحدود (إطاران) */
 const MIN_SPAN_MS = 2 * FRAME_MS;
+/** أدنى زمن كلامٍ يُقبل عنده الحكمُ بقياس الصوت عند إخفاق السماع (م.ث) */
+const MIN_FALLBACK_SPEECH_MS = 600;
 
 export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: AlignHooks): Promise<AlignmentResult> {
   const sr = input.sampleRate ?? 16000;
@@ -86,6 +88,22 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
 
   hooks.stage('تهيئة الصوت المسجَّل…');
   const energy = energyEnvelope(samples, FRAME_MS);
+  /**
+   * هل في التسجيل كلامُ إنسانٍ أصلًا؟ (انظر audio.speechPresence)
+   *
+   * لا يُعتمد على عتبة الصوت وحدها: فهي نسبية، فتسجيلٌ ليس فيه إلا ضجيجُ الغرفة
+   * يُعدّ كلُّه «صوتًا»، ثم يُوزَّع على كلمات الآية بأوزان أزمنتها المتوقَّعة
+   * فتخرج أزمنةُ الكلمات مطابقةً للمتوقَّع — وكانت النتيجة أن **السكوت يُجاز**:
+   * درجةٌ حسنة وكلماتٌ «في المقدار» لقارئٍ لم ينطق حرفًا.
+   */
+  const presence = speechPresence(samples, FRAME_MS);
+  /**
+   * السؤال هنا: **هل تكلّم أحدٌ أصلًا؟** — لا «هل أتمّ الآية؟». فلا يُربط الحدّ
+   * بزمن الآية المتوقَّع: من قرأ ﴿الٓمٓ﴾ في ثانيةٍ (وهي تمدّ ستّ حركات) تكلّم
+   * وقصّر، فحكمُه «أقصر» لا «لم يُسمع كلام». وأمّا القصر والإسقاط فيتولّاهما
+   * بوّابةُ النصّ وبوّابةُ الأزمنة.
+   */
+  const noSpeech = !input.demo && !presence.hasSpeech;
 
   let engine: EngineId = 'offline-dtw';
   let perWord: { midMs: number; conf: number }[] | null = null;
@@ -182,6 +200,16 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     }
   }
 
+  /**
+   * بوّابة الكلام: لم يُسمع كلامٌ في التسجيل، ولم يُخرج السماعُ الذكيّ نصًّا.
+   *
+   * تُقدَّم بيّنةُ السماع الذكيّ على القياس الصوتيّ: فإن أخرج Whisper نصًّا
+   * عربيًّا صُدِّق (ولو قال القياسُ الصوتيّ إنه لا كلام) — فإخفاقُ الكاشف أهونُ
+   * من أن يُردّ قارئٌ قرأ فعلًا. وأمّا إن لم يُخرج نصًّا ولم يجد الكاشفُ كلامًا
+   * فالتسجيل صمتٌ أو ضجيج، ولا تُقاس أزمنةُ كلماتٍ لم تُقرأ.
+   */
+  const noSpeechGate = noSpeech && matchSource !== 'transcript';
+
   if (!perWord) {
     hooks.stage('قياس الصوت لمطابقة الكلمات…');
     perWord = energyForcedAlignment(tjs, energy, durationMs);
@@ -239,11 +267,14 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const alignWords: WordAlignment[] = ayahWords.map((w, k) => {
     const i = k + prefixCount; // فهرس الكلمة في قائمة المحاذاة (بعد البسملة إن وُجدت)
     const { startMs, endMs } = spans[i];
-    const status = classifyWord(measuredMs[i], refMs[i], opts.tau, refWin[i]);
+    // لا كلام في التسجيل: أزمنةُ الكلمات اختلقها توزيعُ الضجيج على الأوزان، فكلُّ
+    // كلمةٍ «لم تُسمع» — ولا يُنصح في زمنٍ لم يُقرأ.
+    const status = noSpeechGate ? 'silent' : classifyWord(measuredMs[i], refMs[i], opts.tau, refWin[i]);
     let conf = perWord[i].conf;
     if (engine === 'whisper-attn') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
     else if (engine === 'whisper-ts') conf = clamp(0.7 * conf + 0.3 * transcriptMatch, 0.05, 0.99);
     else if (engine === 'whisper-energy') conf = clamp(0.55 * conf + 0.45 * transcriptMatch, 0.05, 0.99);
+    if (noSpeechGate) conf = Math.min(conf, 0.15);
     return {
       index: k,
       ayah: w.ayah,
@@ -286,6 +317,12 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource = 'demo';
     predWords = ayahWords.map((w) => ({ word: normalizeArabic(w.word), ok: true }));
     textCheck = 'demo';
+  } else if (noSpeechGate) {
+    // صمتٌ أو ضجيج: لا نصَّ ولا كلام — فلا تُعرض «تغطيةُ كلمات» لا وجود لها
+    transcriptMatch = 0;
+    matchSource = 'coverage';
+    predWords = [];
+    textCheck = 'nospeech';
   } else if (matchSource !== 'transcript') {
     // (ومنه التقييم اللحظي: لا يستمع بالألفاظ، فتُعرض تغطية الكلمات المسموعة — بلا اجتياز)
     transcriptMatch = voiced;
@@ -298,16 +335,20 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   const textOk = textCheck === 'ok' || textCheck === 'demo';
 
   /**
-   * أخفق السماعُ الذكي: استمع إلى صوتٍ بيّن فلم يُخرج لفظًا عربيًّا واحدًا.
+   * أخفق السماعُ الذكي: استمع إلى **كلامٍ بيّن** فلم يُخرج لفظًا عربيًّا واحدًا.
    * وهذا **غير** أن يسمع القارئَ يقول غير الآية: فلا يُقال لكلماته «لم يُسمع
    * لفظُها» (كان يُقال ذلك لتلاوةٍ سليمة فتُردّ)، بل يُقال إن اللفظ لم يُتحقَّق
-   * منه — فتُعرض أزمنتُها كما قِيست، بلا اجتياز حتى يتبيّن النصّ.
+   * منه — فتُعرض أزمنتُها كما قِيست، ويُحكم عليها بقياس الصوت.
+   *
+   * وشرطُه الآن أن يكون في التسجيل كلامٌ فعلًا (لا صمتٌ ولا ضجيج): كانت تُقبل
+   * فيه ٣٠٠ م.ث من «الصوت» بحسب العتبة النسبية، فضجيجُ الغرفة وحده كان يُدخل
+   * التسجيلَ في هذا الباب ثم يُجازه بقياس الصوت.
    */
-  const textUnavailable = heardNothing && !input.demo && voicedMsOf(energy) >= 300;
+  const textUnavailable = heardNothing && !input.demo && presence.speechMs >= MIN_FALLBACK_SPEECH_MS;
 
   // لكل كلمة: هل تبيّن لفظُها؟ — كانت الكلمة تُوسم «جيد» بزمنها وحده ولو سُمع في
   // موضعها لفظٌ آخر. فما لم يُسمع لا يُحكم على زمنه ولا يُنصح فيه.
-  if (textCheck === 'mismatch') {
+  if (textCheck === 'mismatch' || textCheck === 'nospeech') {
     for (const w of alignWords) w.textHeard = false;
   } else if (matchSource === 'transcript' && scored) {
     const miss = new Set(scored.missing.map((m) => m.index));
@@ -318,6 +359,10 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   if (textCheck === 'weak' || textCheck === 'mismatch') {
     // الأزمنة لا تُحتسب لنصٍّ غير الآية: الدرجة تُقيَّد بمقدار ما تبيّن من النصّ
     overallScore = Math.min(overallScore, Math.round(100 * (0.25 + 0.5 * transcriptMatch)));
+  }
+  if (noSpeechGate) {
+    // ولا تُحتسب أزمنةٌ قِيست من ضجيج: فما وُزِّع على الكلمات إنما هو أوزانُها
+    overallScore = Math.min(overallScore, 20);
   }
   const coach = buildCoach(
     alignWords,
@@ -350,6 +395,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     predWords,
     textCheck,
     textUnavailable,
+    noSpeech: noSpeechGate,
+    speechMs: Math.round(presence.speechMs),
     textRecall,
     textPrecision,
     textKind,
@@ -402,12 +449,6 @@ export function vadThreshold(energy: Float32Array): { thr: number; noiseFloor: n
   // العتبة نصفَ مستوى الكلام أبدًا.
   const thr = Math.max(Math.min(Math.max(noiseFloor * 3, speechLevel * 0.15), speechLevel * 0.5), 1e-5);
   return { thr, noiseFloor, speechLevel };
-}
-
-/** مجموع الزمن المصوَّت في التسجيل (م.ث) */
-function voicedMsOf(energy: Float32Array): number {
-  const { thr } = vadThreshold(energy);
-  return voicedRuns(energy, thr).reduce((a, r) => a + (r.to - r.from + 1) * FRAME_MS, 0);
 }
 
 /* ------------------------------------------------------------------ */

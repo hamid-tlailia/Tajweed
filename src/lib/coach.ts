@@ -149,6 +149,13 @@ export function textGateMessage(info: TextGateInfo, transcriptMatch: number, n: 
       'إن كنت تقرؤها فاخترها من تبويب التمرين، وإلا فاقرأ الآية المختارة كما في المصحف.'
     );
   }
+  if (info.textCheck === 'nospeech') {
+    return (
+      'لم يُسمع في هذا التسجيل كلامٌ أصلًا — لا تلاوةَ ولا حديثًا، بل صمتٌ أو ضجيجُ محيط. ' +
+      'تأكّد من إذن الميكروفون، وابدأ التسجيل ثم اقرأ الآية بصوتٍ واضح قريبٍ من الميكروفون، ' +
+      'وأبعده عن ضجيج المروحة والشارع.'
+    );
+  }
   if (info.textUnavailable) {
     return (
       'لم يتمكّن السماع الذكي من تمييز الألفاظ في هذا التسجيل — فأزمنتك مقيسةٌ كما تراها، ' +
@@ -252,6 +259,11 @@ export function buildCoach(
   }
   if (!textOk && !acoustic) {
     if (gateMsg) parts.push(gateMsg);
+    if (text.textCheck === 'nospeech') {
+      // لا كلام في التسجيل: لا تُساق أحكامُ الكلمات (فهي لم تُقرأ) ولا تُعرض درجةُ أزمنةٍ مُختلقة
+      parts.push(`كلُّ كلمات الآية (${n}) لم يُسمع لها صوت.`);
+      return { tips, summary: parts.join(' '), passed };
+    }
     if (text.textCheck === 'unverified') {
       if (text.textUnavailable) {
         parts.push(

@@ -249,34 +249,40 @@ export default function AlignmentConsole() {
   /** أخفق السماع الذكي: صوتٌ بيّن ولم يُخرج لفظًا عربيًّا واحدًا */
   const textUnavailable = !!result.textUnavailable;
   const matchSub =
-    textCheck === 'unverified'
-      ? textUnavailable
-        ? 'لم يتمكّن السماع الذكي من تمييز الألفاظ — هذه تغطية الصوت فقط'
-        : 'لم يُتحقَّق من النصّ — هذه تغطية الكلمات المسموعة فقط'
-      : textCheck === 'demo'
-        ? 'محاكاة للتجربة — بلا ميكروفون'
-        : textCheck === 'mismatch'
-          ? result.textKind === 'quran' && result.heardOf
-            ? `المقروء آيةٌ أخرى: ${ayahLabel(result.heardOf)}`
-            : result.textKind === 'speech'
-              ? 'ما سُمع كلامٌ عاديٌّ ليس من القرآن'
-              : 'ما سُمع ليس نصَّ هذه الآية'
-          : textCheck === 'weak'
+    textCheck === 'nospeech'
+      ? 'لم يُسمع في التسجيل كلامٌ أصلًا (صمتٌ أو ضجيج)'
+      : textCheck === 'unverified'
+        ? textUnavailable
+          ? 'لم يتمكّن السماع الذكي من تمييز الألفاظ — هذه تغطية الصوت فقط'
+          : 'لم يُتحقَّق من النصّ — هذه تغطية الكلمات المسموعة فقط'
+        : textCheck === 'demo'
+          ? 'محاكاة للتجربة — بلا ميكروفون'
+          : textCheck === 'mismatch'
             ? result.textKind === 'quran' && result.heardOf
-              ? `المقروء يُشبه آيةً أخرى: ${ayahLabel(result.heardOf)}`
-              : 'تبيّن بعضُ نصّ الآية فقط'
-            : 'تبيّن نصّ الآية في تلاوتك';
+              ? `المقروء آيةٌ أخرى: ${ayahLabel(result.heardOf)}`
+              : result.textKind === 'speech'
+                ? 'ما سُمع كلامٌ عاديٌّ ليس من القرآن'
+                : 'ما سُمع ليس نصَّ هذه الآية'
+            : textCheck === 'weak'
+              ? result.textKind === 'quran' && result.heardOf
+                ? `المقروء يُشبه آيةً أخرى: ${ayahLabel(result.heardOf)}`
+                : 'تبيّن بعضُ نصّ الآية فقط'
+              : 'تبيّن نصّ الآية في تلاوتك';
   const matchTone: 'mint' | 'gold' | 'warn' | 'slate' =
     textCheck === 'unverified' ? 'slate' : textOk ? (matchPct >= 70 ? 'mint' : 'gold') : 'warn';
+  /** لم يُسمع كلام: تُعرض النسبة صفرًا لا «—» */
+  const matchValue = textCheck === 'unverified' ? '—' : `${matchPct}%`;
   /** عنوان بطاقة الاجتياز: يُصرَّح بسبب عدم الاجتياز إن كان النصّ */
   const textFailTitle =
-    result.textKind === 'speech'
-      ? 'لم تُجتز — المقروء كلامٌ عاديٌّ ليس من القرآن'
-      : result.textKind === 'quran' && result.heardOf
-        ? `لم تُجتز — المقروء آيةٌ أخرى (${ayahLabel(result.heardOf)})`
-        : textCheck === 'weak'
-          ? 'لم تُجتز — لم يتبيّن نصّ الآية كاملًا'
-          : 'لم تُجتز — المقروء ليس نصَّ الآية';
+    textCheck === 'nospeech'
+      ? 'لم تُجتز — لم يُسمع في التسجيل كلام'
+      : result.textKind === 'speech'
+        ? 'لم تُجتز — المقروء كلامٌ عاديٌّ ليس من القرآن'
+        : result.textKind === 'quran' && result.heardOf
+          ? `لم تُجتز — المقروء آيةٌ أخرى (${ayahLabel(result.heardOf)})`
+          : textCheck === 'weak'
+            ? 'لم تُجتز — لم يتبيّن نصّ الآية كاملًا'
+            : 'لم تُجتز — المقروء ليس نصَّ الآية';
   const passTitle = result.reciter
     ? result.passed
       ? textUnavailable
@@ -385,9 +391,11 @@ export default function AlignmentConsole() {
         {!result.passed ? (
           <p className="mt-3 text-[11px] text-slate-500">
             {!textOk
-              ? textCheck === 'unverified'
-                ? `شرط الاجتياز: أن يتبيّن نصّ الآية بالسماع الذكي، ثم درجة ${PASS_SCORE}٪ فأكثر.`
-                : `شرط الاجتياز أولًا: أن يكون المقروء هو الآية المختارة (تطابق النصّ ${Math.round(100 * TEXT_GATE_OK)}٪ فأكثر) — ثم الدرجة ${PASS_SCORE}٪.`
+              ? textCheck === 'nospeech'
+                ? `شرط الاجتياز أولًا: أن يُسمع كلامُك — قرِّب الميكروفون واقرأ الآية، ثم درجة ${PASS_SCORE}٪ فأكثر.`
+                : textCheck === 'unverified'
+                  ? `شرط الاجتياز: أن يتبيّن نصّ الآية بالسماع الذكي، ثم درجة ${PASS_SCORE}٪ فأكثر.`
+                  : `شرط الاجتياز أولًا: أن يكون المقروء هو الآية المختارة (تطابق النصّ ${Math.round(100 * TEXT_GATE_OK)}٪ فأكثر) — ثم الدرجة ${PASS_SCORE}٪.`
               : result.reciter
                 ? `حدّ الاجتياز: مطابقة القارئ المعتمد ${PASS_SCORE}٪ (مطابقتك ${result.reciter.matchPct}٪) ودرجتك الذاتية ${PASS_SCORE}٪ (درجتك ${result.overallScore}٪). حاذِ أزمنة كلماتك بأزمنته وأتمم المدود بمقاديرها، ثم أعد التلاوة.`
                 : `حدّ الاجتياز ${PASS_SCORE}٪. أعد التلاوة بعد إصلاح الملاحظات أعلاه.`}
@@ -479,7 +487,7 @@ export default function AlignmentConsole() {
 
       <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <Stat label="الدرجة الكلية" value={`${result.overallScore}%`} tone={scoreTone} sub="يجمع دقةَ النطق وصحةَ المدود والغنن" />
-        <Stat label="مطابقة ما قرأته" value={textCheck === 'unverified' ? '—' : `${matchPct}%`} tone={matchTone} sub={matchSub} />
+        <Stat label="مطابقة ما قرأته" value={matchValue} tone={matchTone} sub={matchSub} />
         <Stat label="مدة التلاوة" value={fmtTime(result.durationMs)} sub={`مرتبة ${TEMPO_META[result.tempo]?.label ?? 'ترتيل'}`} />
         <Stat
           label="طريقة التقييم"

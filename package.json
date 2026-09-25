@@ -14,6 +14,7 @@
     "test:compare": "tsx scripts/test-compare.ts",
     "test:score": "tsx scripts/test-score.ts",
     "test:text": "tsx scripts/test-text.ts",
+    "test:speech": "tsx --import ./scripts/asr-double.mjs scripts/test-speech.ts",
     "test:reference": "tsx scripts/test-reference.ts",
     "bench:timing": "tsx scripts/bench-timing.ts"
   },
