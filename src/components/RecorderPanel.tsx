@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { engineAlign, engineTranscribe } from '@/lib/engine';
 import { Recorder, decodeBlobTo16k, makeDemoSamples } from '@/lib/audio';
+import { browserSpeechAvailable, startBrowserSpeech } from '@/lib/browser-speech';
 import { ayahLabel, classifyUtterance, loadCorpus, utteranceTokens } from '@/lib/corpus';
 import { LiveTajweedTracker } from '@/lib/live';
 import { editClose, matchTokens, scoreTranscriptMatch } from '@/lib/match';
@@ -113,8 +114,9 @@ export default function RecorderPanel() {
   const [stopping, setStopping] = useState(false);
 
   const recRef = useRef<Recorder | null>(null);
+  const browserSpeechRef = useRef<{ stop: () => void; text: () => string } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const lastInputRef = useRef<{ samples: Float32Array; url: string | null; demo: boolean } | null>(null);
+  const lastInputRef = useRef<{ samples: Float32Array; url: string | null; demo: boolean; browserTranscript?: string } | null>(null);
   const busyRef = useRef(false);
   const trackerRef = useRef<LiveTajweedTracker | null>(null);
   const livePushRef = useRef(0);
@@ -334,7 +336,7 @@ export default function RecorderPanel() {
   }
 
   /** التحليل الكامل (بالسماع الذكي إن كان مُجهَّزًا) — يحجز الواجهة حتى ينتهي */
-  async function runAnalysis(input: { samples: Float32Array; url: string | null; demo: boolean }) {
+  async function runAnalysis(input: { samples: Float32Array; url: string | null; demo: boolean; browserTranscript?: string }) {
     if (!data || busyRef.current) return;
     busyRef.current = true;
     const session = ++sessionRef.current;
@@ -346,7 +348,7 @@ export default function RecorderPanel() {
     try {
       const res = await engineAlign(
         input,
-        { tau, modelSize, target, riwayah, tempo, reference: { id: reciter.id, name: reciter.name, pace: reciter.pace } },
+        { tau, modelSize, target, riwayah, tempo, browserTranscript: input.browserTranscript, reference: { id: reciter.id, name: reciter.name, pace: reciter.pace } },
         {
           stage: (s) => setProcessing(true, s),
           model: modelHook,
@@ -372,7 +374,7 @@ export default function RecorderPanel() {
    * استبدالٍ لاحق) مع التنبيه إلى أنها غير معتمدةٍ حتى يُجهَّز السماع.
    * والمراجعة اليدوية متاحةٌ دائمًا بزرّ «إعادة تقييم آخر تسجيل».
    */
-  async function evaluate(input: { samples: Float32Array; url: string | null; demo: boolean }) {
+  async function evaluate(input: { samples: Float32Array; url: string | null; demo: boolean; browserTranscript?: string }) {
     if (!data || busyRef.current) return;
     const { modelStatus } = useTahqiq.getState();
     const fullOnce = !instantEval || input.demo || modelStatus === 'ready' || modelStatus === 'loading';
@@ -439,6 +441,50 @@ export default function RecorderPanel() {
       try {
         await r.start();
         startLiveSession();
+        // قناة ثانية اختيارية: تعرّف المتصفح أفضل من Whisper في كثير من
+        // الهواتف، خصوصًا فواتح السور. لا تُستعمل إن لم يدعمها المتصفح.
+        browserSpeechRef.current = startBrowserSpeech(({ text }) => {
+          const tracker = trackerRef.current;
+          const sess = liveSessionRef.current;
+          if (!tracker || !text || !sess.text) return;
+          const sc = scoreTranscriptMatch(text, sess.text);
+          let hits = 0;
+          let upTo = 0;
+          sc.targetHit.forEach((hit, j) => {
+            if (hit) hits++;
+            if (hit && hits >= 0.6 * (j + 1)) upTo = j + 1;
+          });
+          if (upTo) tracker.noteHeard(upTo);
+          setLiveText({
+            status: sc.precision >= 0.5 ? 'same' : sc.predWords.length ? 'warn' : 'checking',
+            heard: sc.predWords.length,
+            precision: sc.precision,
+            text,
+            kind: sc.precision >= 0.5 ? 'target' : 'unknown',
+            source: 'browser',
+          });
+          setLive(tracker.snapshot());
+          // لا نكتفي بنسبة الآية المختارة: افحص المصحف كله حتى نقول بدقة
+          // «آية أخرى» أو «كلام عادي»، وهي المشكلة الأهم في الفواتح.
+          void loadCorpus().then((corpus) => {
+            if (trackerRef.current !== tracker) return;
+            const ident = classifyUtterance(corpus, utteranceTokens(text), sess.text, {
+              targetMatch: sc.match,
+              isTarget: (s, a) => s === sess.surahId && (sess.scope === 'surah' || a === sess.ayah),
+            });
+            const otherLabel = ident.kind === 'quran' && ident.best ? ayahLabel(ident.best) : undefined;
+            const enough = sc.predWords.length >= 1;
+            setLiveText({
+              status: ident.kind === 'target' ? 'same' : enough && (ident.kind === 'quran' || ident.kind === 'speech') ? 'warn' : 'checking',
+              heard: sc.predWords.length,
+              precision: sc.precision,
+              text,
+              kind: ident.kind,
+              otherLabel,
+              source: 'browser',
+            });
+          }).catch(() => {});
+        });
         levelLoopRef.current = r.startLevelLoop();
         r.startWaveLoop();
         setRecording(true, null);
@@ -458,6 +504,9 @@ export default function RecorderPanel() {
       await new Promise((res) => setTimeout(res, STOP_FLUSH_MS));
       stoppingRef.current = false;
       setStopping(false);
+      const browserTranscript = browserSpeechRef.current?.text() ?? '';
+      browserSpeechRef.current?.stop();
+      browserSpeechRef.current = null;
       r.stopWaveLoop();
       r.stopLevelLoop();
       levelLoopRef.current = false;
@@ -473,7 +522,7 @@ export default function RecorderPanel() {
         const samples = await decodeBlobTo16k(blob);
         const url = URL.createObjectURL(blob);
         setProcessing(false, '');
-        void evaluate({ samples, url, demo: false });
+        void evaluate({ samples, url, demo: false, browserTranscript });
       } catch {
         setProcessing(false, '');
         setRecording(false, 'تعذّرت قراءة التسجيل');
@@ -525,7 +574,9 @@ export default function RecorderPanel() {
   return (
     <Panel
       title="سجّل تلاوتك"
-      subtitle="اقرأ بصوت واضح وبهدوء — يُعالَج صوتك على جهازك ولا يُرفَع إلى الإنترنت أبدًا"
+      subtitle={browserSpeechAvailable()
+        ? 'اقرأ بوضوح — يقارن التطبيق تعرّف المتصفح مع Whisper ويعتمد الأدق (قد يرسل المتصفح الصوت إلى خدمة التعرّف التابعة له)'
+        : 'اقرأ بصوت واضح وبهدوء — التحليل المحلي يعمل بـ Whisper على جهازك'}
     >
       {/* اسمع الآية من القارئ المعتمد ثم اقرأها — وتُخفى أثناء التسجيل لتعلو المرافقة */}
       {!recording ? <ReciterListen /> : null}

@@ -46,6 +46,37 @@ function WordLine({ ms, minMs, maxMs, tone }: { ms: number; minMs: number; maxMs
   );
 }
 
+/** الأحكام الزمنية في الكلمة، كل حكم بخط مستقل يمتلئ بالتتابع من صوت القارئ. */
+function TimedRuleLines({ tj, elapsedMs }: { tj: WordTajweed; elapsedMs: number }) {
+  const timed = tj.rules
+    .filter((r) => /مد|غن|صلة|لين/.test(r.label))
+    .map((r) => ({
+      ...r,
+      harakat: /غن/.test(r.label) ? 2 : /لازم/.test(r.label) ? 6 : /متصل|منفصل|كبرى/.test(r.label) ? 4 : /لين/.test(r.label) ? 4 : 2,
+    }));
+  if (!timed.length) return null;
+  const sum = timed.reduce((n, r) => n + r.harakat, 0);
+  let before = 0;
+  return (
+    <div className="mt-2.5 space-y-1.5" aria-label="تقدّم أحكام الكلمة">
+      {timed.map((r, i) => {
+        const duration = (tj.expectedMs * r.harakat) / Math.max(1, sum);
+        const fill = Math.max(0, Math.min(100, (100 * (elapsedMs - before)) / Math.max(1, duration)));
+        before += duration;
+        return (
+          <div key={`${r.label}-${i}`} className="grid grid-cols-[minmax(6rem,auto)_1fr_auto] items-center gap-2 text-[9px]">
+            <span className="truncate text-gold-200">{r.label}</span>
+            <span className="h-1.5 overflow-hidden rounded-full bg-ink-700/80">
+              <span className="block h-full rounded-full bg-gradient-to-l from-gold-500 to-mint-500 transition-[width] duration-100" style={{ width: `${fill}%` }} />
+            </span>
+            <span className="text-slate-500">{r.harakat} ح</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * المرافقة الحية — تُعرض أثناء التسجيل: تُضاء الكلمة الجارية مع حكمها المتوقَّع
  * وزمنها، وتُحكم كل كلمة لحظة انتهائها، ويظهر تنبيه فوري عند أي مخالفة
@@ -165,7 +196,7 @@ function TextVerdict({
         {text}
         {live?.text && !finished && live.status !== 'off' && live.status !== 'checking' ? (
           <span className="mt-0.5 block truncate font-quran text-[13px] text-slate-500" title={live.text}>
-            سُمع: {live.text}
+            سُمع{live.source === 'browser' ? ' بتعرّف المتصفح' : ''}: {live.text}
           </span>
         ) : null}
       </span>
@@ -338,7 +369,8 @@ export default function LiveCoach({
           ) : null}
           {curTj ? (
             <div className="mt-2.5">
-              <RuleBadges rules={curTj.rules} max={4} />
+              <TimedRuleLines tj={curTj} elapsedMs={snapshot.currentVoicedMs} />
+              <div className="mt-2"><RuleBadges rules={curTj.rules} max={4} /></div>
             </div>
           ) : null}
         </div>
