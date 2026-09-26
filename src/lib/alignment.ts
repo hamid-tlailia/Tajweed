@@ -52,6 +52,9 @@ export interface AlignOpts {
    * مركزُ عدلة السرعة — فكل تحليلٍ يُقاس إلى قارئٍ معتمد لا إلى نفسه.
    */
   reference?: { id: string; name: string; pace: number | null };
+  /** نص مساعد التقطته واجهة Speech-to-Text الأصلية في المتصفح بالتوازي.
+   * نختار بينه وبين Whisper بحسب الأعلى مطابقةً، ولا نثق به لمجرد وجوده. */
+  browserTranscript?: string;
 }
 
 export interface AlignHooks {
@@ -138,7 +141,14 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
         ),
       );
       transcript = tsOut.text;
-      const sc = scoreTranscriptMatch(transcript, targetTextOf(opts.target));
+      // Web Speech أدقّ غالبًا في العربية القصيرة، وWhisper أنفع حين لا يدعمه
+      // المتصفح. نقارن التفريغين إلى الهدف ونأخذ الأقوى بدل دمجهما (فالدمج
+      // يكرر الكلمات ويخفض الدقة). ومع التعادل نفضّل نص المتصفح غير الفارغ.
+      const whisperScore = scoreTranscriptMatch(transcript, targetTextOf(opts.target));
+      const browserText = String(opts.browserTranscript ?? '').trim();
+      const browserScore = browserText ? scoreTranscriptMatch(browserText, targetTextOf(opts.target)) : null;
+      if (browserScore && browserScore.match >= whisperScore.match) transcript = browserText;
+      const sc = browserScore && browserScore.match >= whisperScore.match ? browserScore : whisperScore;
       transcriptMatch = sc.match;
       predWords = sc.predWords;
       heardNothing = sc.empty;

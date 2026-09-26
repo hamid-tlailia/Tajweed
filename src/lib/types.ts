@@ -102,6 +102,8 @@ export interface LiveTextCheck {
   kind?: 'target' | 'quran' | 'speech' | 'unknown';
   /** إن كان آيةً أخرى: مسماها («سورة الفاتحة — الآية ٥») */
   otherLabel?: string;
+  /** القناة التي قدّمت النص: تعرّف المتصفح أو Whisper المحلي */
+  source?: 'browser' | 'whisper';
 }
 
 /** مقارنة كلمة من تلاوة المستخدم بنظيرتها عند القارئ المعتمد */
