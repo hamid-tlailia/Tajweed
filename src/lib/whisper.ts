@@ -135,6 +135,63 @@ async function toWhisperInputs(b: WhisperBundle, samples: Float32Array): Promise
   return b.processor(samples, { return_tensor: true, sampling_rate: 16000 });
 }
 
+/**
+ * استدعاء Whisper بالطريقة الصحيحة في transformers.js 3.x.
+ *
+ * `generate` يستقبل **كائنًا واحدًا**: `{ inputs: input_features, language, task, ... }`.
+ * كان الكود يمرّر خيارات اللغة/المهمة وسيطًا ثانيًا (`generate(inputs, opts)`)، وهذا
+ * الوسيط يُهمل في transformers.js؛ فكان Whisper يعمل بإعداداته الافتراضية (غالبًا
+ * الإنجليزية) بدل إجباره على العربية، فتظهر نتيجة «لم يتبيّن اللفظ» لكلامٍ عربيّ واضح.
+ */
+async function whisperGenerate(b: WhisperBundle, inputs: any, opts: Record<string, unknown>): Promise<any> {
+  const features = inputs?.input_features ?? inputs;
+  return b.model.generate({ inputs: features, ...opts });
+}
+
+/** استخراج المعرّفات من مخرجات generate: Tensor أو sequences أو مصفوفة */
+function generatedIds(out: any): number[] {
+  if (out == null || typeof out === 'string') return [];
+  const seq = out?.sequences ?? out?.sequence ?? out;
+  const first = Array.isArray(seq) ? seq[0] : seq;
+  if (first?.tolist) {
+    const list = first.tolist();
+    return toNumberArray(Array.isArray(list?.[0]) ? list[0] : list);
+  }
+  if (first?.data) {
+    const data = toNumberArray(first.data);
+    const dims = Array.isArray(first.dims) ? first.dims : [];
+    const cols = dims.length >= 2 ? Number(dims[dims.length - 1]) : 0;
+    return cols > 0 ? data.slice(0, cols) : data;
+  }
+  return toNumberArray(first);
+}
+
+/** تفكيك مخرجات Whisper مع رموز الأزمنة إلى نصّ ومقاطع، بالطريقة التي يستعملها Pipeline */
+async function decodeWhisperAsr(
+  b: WhisperBundle,
+  out: any,
+  chunkSeconds: number,
+  returnTimestamps: boolean,
+): Promise<{ text: string; chunks: any[] }> {
+  if (typeof out?.text === 'string') return { text: out.text.trim(), chunks: Array.isArray(out?.chunks) ? out.chunks : [] };
+  const ids = generatedIds(out);
+  if (!ids.length) return { text: '', chunks: [] };
+  const tok = b.processor?.tokenizer;
+  if (tok?._decode_asr) {
+    const fe = b.processor?.feature_extractor?.config;
+    const maxPos = Number(b.model?.config?.max_source_positions ?? 1500);
+    const timePrecision = Number(fe?.chunk_length ?? 30) / Math.max(1, maxPos);
+    const [text, opt] = tok._decode_asr([{ tokens: ids, stride: [chunkSeconds, 0, 0] }], {
+      time_precision: Number.isFinite(timePrecision) && timePrecision > 0 ? timePrecision : 0.02,
+      return_timestamps: returnTimestamps,
+      force_full_sequences: false,
+    });
+    return { text: String(text ?? '').trim(), chunks: Array.isArray(opt?.chunks) ? opt.chunks : [] };
+  }
+  const text = await b.processor.tokenizer.decode(ids, { skip_special_tokens: true });
+  return { text: String(text ?? '').trim(), chunks: [] };
+}
+
 /** هل في النصّ حرفٌ عربيٌّ واحد على الأقل؟ (علاماتُ الصمت والموسيقى ليست لفظًا) */
 export function hasArabic(s: string): boolean {
   return /[\u0621-\u064A]/.test(String(s ?? ''));
@@ -187,11 +244,9 @@ export async function whisperTranscribeChunked(
 
   /** المسار البسيط (بلا أزمنة): أثبتُ المسارين — يُفكّ الرمزُ منه يدويًّا */
   async function plainGenerate(inputs: any, opts: Record<string, unknown> = base): Promise<string> {
-    const plain: any = await b.model.generate(inputs, opts);
+    const plain: any = await whisperGenerate(b, inputs, opts);
     if (typeof plain === 'string') return plain.trim();
-    // generate() may return a batch array, a single tensor, or a wrapper object
-    const p0 = Array.isArray(plain) ? plain[0] : plain?.sequence ?? plain;
-    const ids = toNumberArray(p0?.data ?? p0 ?? []);
+    const ids = generatedIds(plain);
     if (!ids.length) return '';
     const t = await b.processor.tokenizer.decode(ids, { skip_special_tokens: true });
     return String(t ?? '').trim();
@@ -207,13 +262,14 @@ export async function whisperTranscribeChunked(
    * يُسمَع له لفظٌ فتُردّ تلاوته الصحيحة. الآن: ما لم يخرج حرفٌ عربيّ واحد
    * تُعاد المحاولة بالمسار البسيط قبل الحكم بأن الصوت لا لفظ فيه.
    */
-  async function generateChunk(inputs: any): Promise<{ text: string; chunks: any[] }> {
+  async function generateChunk(inputs: any, seconds: number): Promise<{ text: string; chunks: any[] }> {
     let text = '';
     let rawChunks: any[] = [];
     try {
-      const out: any = await b.model.generate(inputs, { ...base, return_timestamps: true });
-      rawChunks = Array.isArray(out?.chunks) ? out.chunks : [];
-      text = String(out?.text ?? rawChunks.map((c) => String(c?.text ?? '')).join(' ')).trim();
+      const out: any = await whisperGenerate(b, inputs, { ...base, return_timestamps: true });
+      const decoded = await decodeWhisperAsr(b, out, seconds, true);
+      rawChunks = decoded.chunks;
+      text = decoded.text || rawChunks.map((c) => String(c?.text ?? '')).join(' ').trim();
     } catch (e) {
       console.warn('[TAHQIQQ] generate(return_timestamps) failed → plain retry:', (e as Error)?.message ?? e);
     }
@@ -238,7 +294,7 @@ export async function whisperTranscribeChunked(
     onChunk?.(i, total);
     try {
       const inputs = await toWhisperInputs(b, seg);
-      const { text: t, chunks: rawChunks } = await generateChunk(inputs);
+      const { text: t, chunks: rawChunks } = await generateChunk(inputs, seg.length / sr);
       const offsetMs = i * 28 * 1000;
       if (t) text = text ? `${text} ${t}` : t;
       for (const c of rawChunks) {

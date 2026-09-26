@@ -228,8 +228,6 @@ export function buildCoach(
   const long = words.filter((w) => w.status === 'long').length;
   const good = words.filter((w) => w.status === 'excellent' || w.status === 'ok').length;
   const textOk = text.textCheck === 'ok' || text.textCheck === 'demo';
-  /** أخفق السماع الذكي فالحكمُ بقياس الصوت وحده (انظر timingVerdictAllowed) */
-  const acoustic = !textOk && !!text.textUnavailable;
 
   /**
    * بابٌ ثانٍ للاجتياز غير الدرجة: فالدرجةُ متوسِّطٌ، ومتوسِّطٌ قد يرتفع
@@ -244,20 +242,15 @@ export function buildCoach(
   const timingPassed = score >= PASS_SCORE && withinFault;
   /**
    * والبابُ الأول قبل ذلك كلِّه: أن يكون المقروءُ هو الآية. فلا تُجاز تلاوةٌ
-   * لم يُسمع نصُّها أو سُمع فخالف — مهما حسُنت أزمنتُها.
+   * لم يُسمع نصُّها أو سُمع فخالف — مهما حسُنت أزمنتُها. وحتى إذا أخفق
+   * السماع الذكي ولم يُخرج لفظًا (`textUnavailable`) تبقى النتيجة تدريبيةً
+   * غير معتمدة؛ لأن الأزمنة وحدها لا تميّز الآية من كلامٍ عاديّ.
    */
-  const passed = timingPassed && (textOk || acoustic);
+  const passed = timingPassed && textOk;
 
   const parts: string[] = [];
   const gateMsg = textGateMessage(text, transcriptMatch, n);
-  if (acoustic) {
-    // حُكمٌ بقياس الصوت: تُقال علّتُه أولًا ثم يُساق الحكم كما يُساق في سائر الحالات
-    parts.push(
-      'لم يتمكّن السماع الذكي من تمييز الألفاظ، فحُكم على تلاوتك بقياس الصوت وحده — ' +
-        'تأكّد أنك قرأت الآية المختارة، وللتحقّق من اللفظ جرّب النموذج «الأدقّ» من الإعدادات.',
-    );
-  }
-  if (!textOk && !acoustic) {
+  if (!textOk) {
     if (gateMsg) parts.push(gateMsg);
     if (text.textCheck === 'nospeech') {
       // لا كلام في التسجيل: لا تُساق أحكامُ الكلمات (فهي لم تُقرأ) ولا تُعرض درجةُ أزمنةٍ مُختلقة
@@ -268,8 +261,8 @@ export function buildCoach(
       if (text.textUnavailable) {
         parts.push(
           timingPassed
-            ? `وأزمنتك حسنة (${score}%، ${good} من ${n} كلمة في المقدار) — وتُعتمد متى تبيّن اللفظ.`
-            : `وأزمنتك ${score}%: ${good} من ${n} كلمة في المقدار.`,
+            ? `وأزمنتك حسنة (${score}%، ${good} من ${n} كلمة في المقدار) — لكنها غير معتمدة للاجتياز حتى يتبيّن أن المقروء هو الآية.`
+            : `وأزمنتك ${score}%: ${good} من ${n} كلمة في المقدار — وهي للتمرين فقط حتى يتبيّن اللفظ.`,
         );
         if (tips[0]) parts.push(`ابدأ بإصلاح: ${tips[0].action}`);
         return { tips, summary: parts.join(' '), passed };
@@ -282,7 +275,7 @@ export function buildCoach(
       }
       parts.push(
         timingPassed
-          ? `أزمنتك لحظيًّا حسنة (${score}%، ${good} من ${n} كلمة في المقدار) — وتُعتمد بعد التحقّق من النصّ.`
+          ? `أزمنتك لحظيًّا حسنة (${score}%، ${good} من ${n} كلمة في المقدار) — ولا تُعتمد إلا بعد التحقّق من النصّ.`
           : `وأزمنتك لحظيًّا ${score}%: ${good} من ${n} كلمة في المقدار.`,
       );
       if (tips[0]) parts.push(`ابدأ بإصلاح: ${tips[0].action}`);
@@ -290,7 +283,7 @@ export function buildCoach(
       parts.push(`ومن جهة الأزمنة ابدأ بإصلاح: ${tips[0].action}`);
     }
   } else if (passed) {
-    parts.push(`${acoustic ? 'وأزمنتك' : 'أحسنت —'} ${score}% درجة جيدة. ${good} من ${n} كلمة في المقدار.`);
+    parts.push(`أحسنت — ${score}% درجة جيدة. ${good} من ${n} كلمة في المقدار.`);
     if (text.missing?.length) {
       parts.push(
         `غير أن ${text.missing.length === 1 ? 'كلمة' : 'كلمات'} ${missingList(text.missing)} لم تتبيّن في المسموع كما في المصحف — تحقّق من نطقها.`,

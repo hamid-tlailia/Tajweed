@@ -150,7 +150,7 @@ function withReference(
   useGate: boolean,
 ): AlignmentResult {
   if (!ref || result.demo) return result;
-  // أخفق السماع الذكي؟ يُحكَم بقياس الصوت وحده فلا تُخفَّض مطابقةُ القارئ (انظر timingVerdictAllowed)
+  // لا تُعتمد مطابقة القارئ للاجتياز إلا إذا تحقّق السماع من نصّ الآية؛ الأزمنة وحدها للتشخيص.
   const verdictOk = timingVerdictAllowed(result.textCheck, result.textUnavailable);
   const cmp = compareWithReciter(result.words, ref, tau, verdictOk, ref.label, result.textCheck, {
     tempo,

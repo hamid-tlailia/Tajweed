@@ -6,7 +6,7 @@
 // يُشغَّل **المحرّك نفسه** (`runAlignment`) على صوتٍ مولَّد، والسماعُ الذكيّ
 // بديلٌ يُتحكَّم فيما يسمعه (scripts/asr-double.mjs) — فتُختبر البوّابات كلها
 // كما تعمل في المتصفّح: كاشفُ الكلام، وبوّابةُ النصّ، ومطابقةُ المصحف كلّه،
-// والحكمُ بقياس الصوت عند إخفاق السماع.
+// وإخفاق السماع على كلامٍ مسموع (لا يفتح الاجتياز بأزمنةٍ وحدها).
 //
 //   node --import ./scripts/asr-double.mjs  ← يُوجّه استيراد whisper إلى البديل
 
@@ -251,14 +251,14 @@ async function main() {
     check('نصف الآية: الحكم «ضعيف»', half.textCheck === 'weak', half.textCheck);
   }
 
-  console.log('\n════════ 5) إخفاق السماع على **كلامٍ مسموع** يبقى مُجازًا بقياس الصوت ════════');
+  console.log('\n════════ 5) إخفاق السماع على **كلامٍ مسموع** لا يُجيز الأزمنة وحدها ════════');
   {
     asr.nothing();
     const r = await judge(d1, 5, speech5);
     check('كلامٌ بيّن والسماع أخفق: اللفظ غير متحقَّق', !!r.textUnavailable && r.textCheck === 'unverified', `${r.textCheck} · ${r.textUnavailable}`);
     check('…ولا يُقال «لم يُسمع كلام»', r.textCheck !== 'nospeech' && !r.noSpeech, r.textCheck);
-    check('…ويُجاز المتقن بقياس الصوت', r.passed, `${r.overallScore}%`);
-    check('…ويُصرَّح بأن الحكم بقياس الصوت', /بقياس الصوت وحده/.test(r.summary), r.summary.slice(0, 80));
+    check('…ولا يُجاز ولو حسُنت الأزمنة', !r.passed, `${r.overallScore}%`);
+    check('…ويُصرَّح بأن الأزمنة غير معتمدة', /غير معتمدة|للتدريب|حتى يتبيّن/.test(r.summary), r.summary.slice(0, 100));
 
     asr.fail('model unavailable');
     const broken = await judge(d1, 5, speech5);

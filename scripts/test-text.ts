@@ -301,7 +301,7 @@ async function pipeline() {
     check('بلا سماعٍ بالألفاظ: لا اجتياز', !r.passed);
   }
 
-  // أخفق السماع الذكي: الحكمُ بقياس الصوت — يُجاز المتقن ويُصرَّح بأن اللفظ لم يُتحقَّق
+  // أخفق السماع الذكي: تُعرض الأزمنة للتدريب، لكن لا تُجيز حتى يتبيّن نصّ الآية
   {
     const tj = analyzeWords(['ٱلۡحَمۡدُ'], 'hafs', 'tadwir')[0];
     const w = {
@@ -315,9 +315,9 @@ async function pipeline() {
       tajweed: tj,
     } as WordAlignment;
     const failed = buildCoach([w], 87, 0, 'coverage', 1, { textCheck: 'unverified', textUnavailable: true });
-    check('أخفق السماع وأزمنتُه متقنة: يُجاز', failed.passed, `${failed.passed} · ${failed.summary.slice(0, 60)}`);
-    check('ويُصرَّح بأن الحكم بقياس الصوت', /بقياس الصوت وحده/.test(failed.summary), failed.summary.slice(0, 90));
-    check('ويجوز الحكم بقياس الصوت (timingVerdictAllowed)', timingVerdictAllowed('unverified', true));
+    check('أخفق السماع وأزمنتُه متقنة: لا يُجاز', !failed.passed, `${failed.passed} · ${failed.summary.slice(0, 60)}`);
+    check('ويُصرَّح بأن الأزمنة غير معتمدة', /غير معتمدة|للتدريب/.test(failed.summary), failed.summary.slice(0, 110));
+    check('ولا يجوز الحكم بقياس الصوت (timingVerdictAllowed)', !timingVerdictAllowed('unverified', true));
 
     // ولم يُخفق السماع بل لم يُستمع بعد (نتيجةٌ لحظية): لا اجتياز كما كان
     const instant = buildCoach([w], 87, 0.9, 'coverage', 1, { textCheck: 'unverified' });
