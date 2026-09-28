@@ -129,7 +129,42 @@ export function loadWhisper(
   return p;
 }
 
-const SOT_ID = 50257; // whisper <|startoftranscript|>
+/**
+ * رموز الموجَّه الخاصّة بويسبر.
+ *
+ * كان مكتوبًا `SOT_ID = 50257`، وهو **`<|endoftext|>`** لا بداية النصّ: بدايةُ
+ * النصّ في النموذج متعدّد اللغات ٥٠٢٥٨ (تحقّقتُ منها من `added_tokens.json`).
+ * ومع ذلك كان الموجَّه يخلو من رمز اللغة `<|ar|>` — وهي عينُ علّة «يفكّ الرمز
+ * بالإنجليزية» التي أُصلحت في مسار التفريغ، باقيةً في مسار المحاذاة. فكانت
+ * التمريرةُ المقيَّدة تفكّ الرمز في حالٍ غير معرَّفة، وعليها تُبنى حدودُ الكلمات
+ * ثم أزمنتُها ثم أحكامُ المدّ والغنّة كلُّها.
+ *
+ * وتُلتمس المعرّفات من المُرمِّز نفسه (فتصحّ مع أيّ نموذج) وهذه احتياطُها.
+ */
+const SPECIAL_FALLBACK: Record<string, number> = {
+  '<|startoftranscript|>': 50258,
+  '<|ar|>': 50272,
+  '<|transcribe|>': 50359,
+  '<|notimestamps|>': 50363,
+};
+
+/** معرّف رمزٍ خاصّ من المُرمِّز، وإلا فاحتياطُه المعروف */
+function specialId(b: WhisperBundle, token: string): number {
+  const id = b.processor?.tokenizer?.model?.tokens_to_ids?.get?.(token);
+  return typeof id === 'number' ? id : SPECIAL_FALLBACK[token];
+}
+
+/**
+ * ترميز نصٍّ **بلا الرموز الخاصّة**.
+ *
+ * مُرمِّز ويسبر يضيف `<|startoftranscript|><|notimestamps|>` … `<|endoftext|>`
+ * تلقائيًّا: فـ«بسم» تُرمَّز إلى خمسة رموز وفيها رمزان فقط. وكان هذا يُفسد عدَّ
+ * رموز كل كلمة في `buildSpans` فتُنسب الكلمةُ إلى صوت كلمةٍ أخرى.
+ */
+async function encodeNoSpecials(b: WhisperBundle, text: string): Promise<number[]> {
+  const e = await b.processor.tokenizer(text, { add_special_tokens: false, return_tensor: true, padding: false });
+  return toNumberArray(e?.input_ids?.data ?? e?.input_ids ?? []);
+}
 
 async function toWhisperInputs(b: WhisperBundle, samples: Float32Array): Promise<any> {
   return b.processor(samples, { return_tensor: true, sampling_rate: 16000 });
@@ -314,6 +349,94 @@ export async function whisperTranscribeChunked(
   return { text, chunks };
 }
 
+/* ------------------------------------------------------------------ */
+/* التحقّق من النصّ باحتمال النموذج (لا بتفريغٍ حرّ)                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * حدّ الفارق بين احتمال نصّ الآية واحتمال أقرب نصٍّ دخيل.
+ *
+ * مقيسٌ لا مقدَّر: على خمس آياتٍ من تلاوة الحصري (١:١، ١:٢، ١:٣، ١١٢:١، ١١٤:١)
+ * قِيس احتمالُ نصّ الآية واحتمالُ أربعة نصوصٍ دخيلة لكلٍّ منها، فكان نصُّ الآية
+ * **أعلاها في كل مرة**، وأدنى فارقٍ ٠٫٤٨ (في «قل هو الله أحد» وهي أقصرها)
+ * وأعلاه ٢٫٥٦. وأمّا نصٌّ مهذًى على صوت البسملة فكان دونها بنحو ٤٫٧.
+ * فحدُّ ٠٫٣ يقبل الخمس جميعًا ويبقى دون أدناها بهامش.
+ */
+export const VERIFY_MARGIN = 0.3;
+
+/**
+ * أدنى احتمالٍ مطلق يُقبل لنصّ الآية.
+ *
+ * الهامشُ وحده يُخدع إن قرأ القارئ آيةً بعيدةً ليست من النصوص الدخيلة: فقد يعلو
+ * نصُّ الآية تلك النصوصَ وهو مع ذلك بعيدٌ عن الصوت. وفي القياس كان أدنى احتمالٍ
+ * لنصٍّ صحيح −٣٫٥٨، وأعلى احتمالٍ لنصٍّ مخالفٍ على صوتٍ ليس له −٢٫٠٧ (وأكثرها
+ * دون −٤). فحدُّ −٤ يقبل الصحيح كلَّه ويردّ أكثر المخالف، والهامشُ يردّ باقيه.
+ */
+export const VERIFY_FLOOR = -4;
+
+/**
+ * هل المسموع هو نصُّ الآية؟ — قرارٌ بالمقارنة لا بالعتبة المطلقة.
+ *
+ * الاحتمالُ المطلق يتقلّب بطول الآية وبالقارئ (بين −١٫٠ و−٣٫٦ في القياس أعلاه)،
+ * فلا يصلح عتبةً وحده. وإنما يُقاس نصُّ الآية إلى نصوصٍ دخيلة على **الصوت نفسه**:
+ * فإن علاها بهامشٍ فالمقروء هو الآية.
+ */
+export function decideByLikelihood(target: number, decoys: number[]): { ok: boolean; margin: number } {
+  if (!Number.isFinite(target)) return { ok: false, margin: NaN };
+  const rivals = decoys.filter((d) => Number.isFinite(d));
+  if (!rivals.length) return { ok: false, margin: NaN };
+  const margin = target - Math.max(...rivals);
+  return { ok: margin >= VERIFY_MARGIN && target >= VERIFY_FLOOR, margin };
+}
+
+/**
+ * متوسّط لوغاريتم احتمال رموز النصّ إذا فُرضت على المفكِّك مع هذا الصوت.
+ *
+ * هذا هو **السؤال الذي يحتاجه التطبيق فعلًا**: لا «ماذا قال؟» (وهو أصعب سؤالٍ
+ * ممكن، وفيه تهذي النماذجُ الصغيرة على التلاوة المجوَّدة) بل «هل قال هذا النصّ
+ * المعلوم؟». وملفّات ONNX الحالية لا تُصدِّر الانتباه، لكنها تُصدِّر `logits` —
+ * فهذا الطريق متاحٌ بالنموذج الذي يشحنه التطبيق أصلًا.
+ */
+export async function whisperScoreText(b: WhisperBundle, samples: Float32Array, text: string): Promise<number> {
+  const norm = normalizeArabic(text);
+  if (!norm) return NaN;
+  const ids = await encodeNoSpecials(b, norm);
+  if (!ids.length) return NaN;
+  const prefix = [
+    specialId(b, '<|startoftranscript|>'),
+    specialId(b, '<|ar|>'),
+    specialId(b, '<|transcribe|>'),
+    specialId(b, '<|notimestamps|>'),
+  ].filter((x) => typeof x === 'number');
+  const inputs = await toWhisperInputs(b, samples);
+  const tf: any = await import('@huggingface/transformers');
+  const seq = [...prefix, ...ids];
+  const decoderIds = new tf.Tensor('int64', BigInt64Array.from(seq.map((x) => BigInt(x))), [1, seq.length]);
+  const out: any = await b.model.forward({ input_features: inputs.input_features, decoder_input_ids: decoderIds });
+  const logits = out?.logits;
+  const dims: number[] = logits?.dims ?? [];
+  if (!logits?.data || dims.length !== 3) return NaN;
+  const T = dims[1];
+  const V = dims[2];
+  const data = logits.data as Float32Array;
+  // انتباهُ الموضع p يتنبّأ بالرمز p+1: فرمزُ النصّ j يُتنبّأ به عند (طول البادئة − ١ + j)
+  const base = Math.max(0, prefix.length - 1);
+  let sum = 0;
+  let count = 0;
+  for (let j = 0; j < ids.length; j++) {
+    const pos = base + j;
+    if (pos >= T) break;
+    const off = pos * V;
+    let max = -Infinity;
+    for (let v = 0; v < V; v++) if (data[off + v] > max) max = data[off + v];
+    let z = 0;
+    for (let v = 0; v < V; v++) z += Math.exp(data[off + v] - max);
+    sum += data[off + ids[j]] - max - Math.log(z);
+    count++;
+  }
+  return count ? sum / count : NaN;
+}
+
 export interface ForcedAlignmentOut {
   rows: Float32Array[]; // per decoder position: attention over encoder frames (head-averaged)
   tEnc: number; // encoder frame count
@@ -321,6 +444,13 @@ export interface ForcedAlignmentOut {
 }
 
 /**
+ * ملاحظة مقيسة: ملفّات ONNX التي يشحنها `onnx-community` (وسائرُ التحويلات
+ * المجرَّبة) تُصدِّر من المفكِّك **`logits` وحدها** بلا أيّ مخرَجِ انتباه — فُحصت
+ * أسماءُ مخرجات الجلسة فلم يكن فيها `attentions` ولا `cross_attentions`. فهذه
+ * الدالّة تُرجع `null` مع هذه الملفّات مهما صحّ موجَّهُها، ويبقى التوقيتُ على
+ * رموز أزمنة ويسبر ثم على قياس الصوت. وقد صُحِّح موجَّهُها على كل حال لتعمل إن
+ * صُدِّر الانتباه يومًا. وأمّا التحقّق من النصّ فطريقُه `whisperScoreText` أعلاه.
+ *
  * Constrained / teacher-forced alignment:
  *  1. tokenize the target ayah (tashkeel-stripped, Arabic-normalized)
  *  2. force decoder_input_ids = [SOT, target tokens…] and run ONE forward
@@ -336,16 +466,22 @@ export async function whisperForcedAlignment(
   const norm = targetWords.map(normalizeArabic).filter(Boolean).join(' ');
   if (!norm) return null;
 
-  let encTok: any;
+  let ids: number[];
   try {
-    encTok = await b.processor.tokenizer(norm, { return_tensor: true, padding: false });
+    ids = await encodeNoSpecials(b, norm);
   } catch {
     return null;
   }
-  const ids: number[] = toNumberArray(encTok?.input_ids?.data ?? encTok?.input_ids ?? []);
   if (!ids.length) return null;
 
-  const decoderIds = new Int32Array([SOT_ID, ...ids]);
+  // الموجَّه الصحيح: بدءٌ ثم لغةٌ عربية ثم مهمّةُ تفريغ ثم «بلا أزمنة» ثم رموز النصّ
+  const prefix = [
+    specialId(b, '<|startoftranscript|>'),
+    specialId(b, '<|ar|>'),
+    specialId(b, '<|transcribe|>'),
+    specialId(b, '<|notimestamps|>'),
+  ].filter((x) => typeof x === 'number');
+  const decoderIds = new Int32Array([...prefix, ...ids]);
   let inputs: any;
   try {
     inputs = await toWhisperInputs(b, samples);
@@ -381,39 +517,56 @@ export async function whisperForcedAlignment(
   if (!out) return null;
 
   const tDec = decoderIds.length;
-  const rows = extractCrossRows(out.cross_attentions ?? out.attentions, tDec);
-  if (!rows || rows.length !== tDec) return null;
+  const all = extractCrossRows(out.cross_attentions ?? out.attentions, tDec);
+  if (!all || all.length !== tDec) return null;
 
-  const spans = await buildSpans(b.processor, targetWords.map(normalizeArabic).filter(Boolean), ids.length);
+  // انتباهُ الموضع p هو انتباهُ الرمز الذي يليه؛ فرمزُ النصّ j انتباهُه في الصفّ
+  // (طول البادئة − ١ + j). وتُقتطع صفوفُ البادئة فلا يبقى إلا صفٌّ لكل رمزِ نصّ.
+  const from = Math.max(0, prefix.length - 1);
+  const rows = all.slice(from, from + ids.length);
+  if (rows.length !== ids.length) return null;
+
+  const spans = await buildSpans(b, targetWords.map(normalizeArabic).filter(Boolean), ids.length);
   return { rows, tEnc: rows[0].length, spans };
 }
 
-/** Greedy mapping of words → BPE token spans (per-word token counts) */
-async function buildSpans(processor: any, words: string[], totalTokens: number): Promise<[number, number][]> {
-  const spans: [number, number][] = [];
-  let pos = 0;
+/**
+ * مخطّط الكلمات على رموزها.
+ *
+ * يُرمَّز كلٌّ بلا الرموز الخاصّة، ومسبوقًا بمسافةٍ إن لم يكن أوّلها — فترميزُ
+ * ويسبر يفرّق بين «الله» و« الله». ومجموعُ ما يخرج يطابق ترميزَ الجملة تمامًا،
+ * فإن خالفه (رسمٌ غريب) وُزّعت الرموزُ على الكلمات بأطوالها.
+ */
+async function buildSpans(b: WhisperBundle, words: string[], totalTokens: number): Promise<[number, number][]> {
+  const counts: number[] = [];
+  let sum = 0;
   for (let i = 0; i < words.length; i++) {
     let n = 1;
     try {
-      const e = await processor.tokenizer(words[i], { return_tensor: true, padding: false });
-      n = Math.max(1, toNumberArray(e?.input_ids?.data ?? e?.input_ids ?? []).length);
+      n = Math.max(1, (await encodeNoSpecials(b, i === 0 ? words[i] : ` ${words[i]}`)).length);
     } catch {
       n = 1;
     }
-    const end = Math.min(totalTokens, pos + n);
-    spans.push([pos, Math.max(pos + (i === words.length - 1 ? 1 : 0), end)]);
-    pos = end;
-    if (pos >= totalTokens) {
-      for (let j = i + 1; j < words.length; j++) spans.push([Math.max(0, totalTokens - 1), totalTokens]);
-      break;
-    }
+    counts.push(n);
+    sum += n;
   }
-  if (spans.length === words.length && totalTokens > 0 && spans[words.length - 1][1] < totalTokens) {
-    spans[words.length - 1][1] = totalTokens;
+  // اختلّ العدّ: تُوزَّع الرموز بأطوال الكلمات بدل إسنادٍ خاطئ
+  if (sum !== totalTokens) {
+    const chars = words.map((w) => Math.max(1, w.length));
+    const tot = chars.reduce((a, c) => a + c, 0);
+    let acc = 0;
+    return words.map((_, i) => {
+      const a = Math.round((totalTokens * acc) / tot);
+      acc += chars[i];
+      const bEnd = i === words.length - 1 ? totalTokens : Math.round((totalTokens * acc) / tot);
+      return [Math.min(a, Math.max(0, totalTokens - 1)), Math.max(a + 1, bEnd)] as [number, number];
+    });
   }
-  if (spans.length < words.length) {
-    const last = spans[spans.length - 1];
-    for (let j = spans.length; j < words.length; j++) spans.push([Math.max(0, last[1] - 1), last[1]]);
+  const spans: [number, number][] = [];
+  let pos = 0;
+  for (const n of counts) {
+    spans.push([pos, pos + n]);
+    pos += n;
   }
   return spans;
 }

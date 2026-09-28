@@ -26,7 +26,14 @@ import type {
   WordTajweed,
 } from './types';
 import { clamp, mean } from './util';
-import { loadWhisper, whisperForcedAlignment, whisperTranscribeChunked, type TsChunk } from './whisper';
+import {
+  decideByLikelihood,
+  loadWhisper,
+  whisperForcedAlignment,
+  whisperScoreText,
+  whisperTranscribeChunked,
+  type TsChunk,
+} from './whisper';
 
 export interface AlignInput {
   samples: Float32Array;
@@ -125,6 +132,8 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   let heardOf: AlignmentResult['heardOf'];
   /** السماع الذكي استمع فعلًا فلم يتبيّن في الصوت لفظٌ عربيٌّ واحد */
   let heardNothing = false;
+  /** تحقُّقُ النصّ باحتمال النموذج (لا بتفريغٍ حرّ) — انظر whisperScoreText */
+  let likelihood: { target: number; margin: number; ok: boolean } | null = null;
 
   if (!input.demo && !opts.fast) {
     try {
@@ -163,6 +172,31 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
           words = [...prefix, ...ayahWords];
           tjs = analyzeTargetWords(words, opts.riwayah, tempo);
           prefixCount = prefix.length;
+        }
+      }
+
+      /**
+       * التحقّق بالاحتمال حين يُخذل التفريغ الحرّ.
+       *
+       * التفريغ الحرّ يسأل النموذج أصعبَ سؤال: «ماذا قال؟» — وعلى التلاوة
+       * المجوَّدة تهذي النماذجُ الصغيرة بكلامٍ عربيٍّ سليم المبنى فاسد المعنى،
+       * فتُردّ تلاوةٌ صحيحة. والتطبيق يعرف الآية سلفًا، فالسؤالُ الذي يحتاجه
+       * مغلق: «هل قال هذا النصّ؟». فيُقاس احتمالُ نصّ الآية على هذا الصوت
+       * ويُقارن بنصوصٍ دخيلة (جارتاها أولًا، فهما أرجحُ ما يُلتبس بها).
+       */
+      if (sc.empty || textCheckOf(sc) !== 'ok') {
+        try {
+          hooks.stage('التحقّق من مطابقة صوتك لنصّ الآية…');
+          const decoys = await decoyTexts(opts.target);
+          if (decoys.length) {
+            const tScore = await whisperScoreText(b, samples, targetTextOf(opts.target));
+            const dScores: number[] = [];
+            for (const d of decoys) dScores.push(await whisperScoreText(b, samples, d));
+            const verdict = decideByLikelihood(tScore, dScores);
+            likelihood = { target: tScore, margin: verdict.margin, ok: verdict.ok };
+          }
+        } catch (e) {
+          console.warn('[TAHQIQQ] likelihood verification unavailable:', e);
         }
       }
 
@@ -342,6 +376,16 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     textCheck = scored ? textCheckOf(scored) : textCheckOf(transcriptMatch);
   }
 
+  /**
+   * تحقُّقُ الاحتمال يُجيز ما ردّه التفريغُ الحرّ.
+   *
+   * فالتفريغ يهذي على التلاوة المجوَّدة فيردّ تلاوةً صحيحة؛ وأمّا قياسُ احتمال
+   * نصّ الآية على الصوت نفسه (مقارنًا بنصوصٍ دخيلة) فيصمد. ولا يُرفع به إلا ما
+   * ردّه التفريغ: أمّا الصمتُ والضجيج فبوّابتُهما قبله، والعرضُ التجريبي لا يمسّه.
+   */
+  const likelihoodVerified = !!likelihood?.ok && textCheck !== 'demo' && textCheck !== 'nospeech';
+  if (likelihoodVerified && textCheck !== 'ok') textCheck = 'ok';
+
   const textOk = textCheck === 'ok' || textCheck === 'demo';
 
   /**
@@ -405,6 +449,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource,
     predWords,
     textCheck,
+    textVerifiedByLikelihood: likelihoodVerified,
     textUnavailable,
     noSpeech: noSpeechGate,
     speechMs: Math.round(presence.speechMs),
@@ -430,6 +475,26 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     passed: coach.passed,
     instant: !!opts.fast,
   };
+}
+
+/**
+ * نصوصٌ دخيلة يُقاس إليها نصُّ الآية: جارتاها في السورة أولًا (وهما أرجحُ ما
+ * يُلتبس بها)، فإن لم تكونا فأوّلُ آيتين من السورة نفسها. ولا يُتَّخذ دخيلٌ هو
+ * الآيةُ نفسها.
+ */
+async function decoyTexts(target: TargetSpec): Promise<string[]> {
+  const [sidStr, scopeStr, ayahStr] = target.key.split(':');
+  const sid = Number(sidStr);
+  const ayah = Number(ayahStr);
+  if (!Number.isFinite(sid) || scopeStr !== 'ayah' || !Number.isFinite(ayah)) return [];
+  const corpus = await loadCorpus();
+  const inSurah = corpus.ayahs.filter((a) => a.surahId === sid && a.ayah !== ayah);
+  if (!inSurah.length) return [];
+  const near = [ayah - 1, ayah + 1]
+    .map((n) => inSurah.find((a) => a.ayah === n))
+    .filter((a): a is (typeof inSurah)[number] => !!a);
+  const picked = near.length ? near : inSurah.slice(0, 2);
+  return picked.slice(0, 2).map((a) => a.text);
 }
 
 /**
@@ -763,7 +828,8 @@ function attentionToWords(
   durationMs: number,
 ): { midMs: number; conf: number }[] {
   const frameMs = FRAME_MS;
-  const Ntok = fa.rows.length - 1; // drop final row (SOT shift)
+  // صفٌّ لكل رمزِ نصّ (اقتُطعت صفوف البادئة في whisperForcedAlignment)
+  const Ntok = fa.rows.length;
   const mids: number[] = [];
   const confs: number[] = [];
   for (let j = 0; j < Ntok; j++) {
