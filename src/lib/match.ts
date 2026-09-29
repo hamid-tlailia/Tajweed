@@ -18,7 +18,33 @@
 // في ٩٥٪ من الحالات (ضجيجٌ خفيف)، وآيةٌ أخرى ≤ ٠٫٢٩ في ٩٩٪ منها؛ فالحدّ ٠٫٥
 // يفصل بينهما، وما بين ٠٫٣ و٠٫٥ «ضعيف» (نصفُ آية، أو سماعٌ رديء).
 
+import {
+  HEARD,
+  arabicWordsMatch,
+  collapseSpelledLetters,
+  mergeDetachedConjunctions,
+  mergeMaddSplits,
+} from './rasm';
 import { normalizeArabic } from './tajweed';
+
+/**
+ * هل الكلمتان واحدة؟ — بقواعد الرسم أوّلًا ثم بالتقارب.
+ *
+ * `arabicWordsMatch` (المنقول من «Contemplating») يوازن الرسمَ العثماني
+ * بالإملائي بقواعده: الألف الخنجرية، والشدّة، والهمزة بلا كرسي، والألف
+ * الصامتة بعد واو الجماعة… وهو مقيسٌ على المصحف كلِّه. لكنه **مطابقةٌ تامّة
+ * بالقواعد** لا تحتمل تحريفَ السماع؛ ومحرّكُ التعرّف يُدخل حرفًا ويُسقط آخر
+ * («رايب» لـ«رَيۡبَ»، «المتقين» لـ«لِّلۡمُتَّقِينَ»). فيُجمع الاثنان: قاعدةٌ أو تقارب.
+ *
+ * @param qRaw كلمة الآية بالرسم كما هي (لا موحَّدة — القواعد تحتاج حركاتها)
+ * @param sRaw الكلمة المسموعة كما هي
+ * @param qNorm وsNorm صورتاهما الموحَّدتان (للتقارب)
+ */
+export function wordsMatch(qRaw: string, sRaw: string, qNorm: string, sNorm: string): boolean {
+  if (qNorm === sNorm) return true;
+  if (qRaw && sRaw && arabicWordsMatch(qRaw, sRaw, HEARD)) return true;
+  return editClose(qNorm, sNorm);
+}
 
 /** حدّ قبول النصّ: F1 على الكلمات بعد التوحيد */
 export const TEXT_GATE_OK = 0.5;
@@ -187,7 +213,11 @@ export function editClose(a: string, b: string): boolean {
 function fuzzyWordLcs(
   p: string[],
   t: string[],
+  /** الصور الخامّة (بالرسم) لمطابقة القواعد — تُهمَل إن لم تُمرَّر */
+  pRaw: string[] = [],
+  tRaw: string[] = [],
 ): { hits: number; okP: boolean[]; okT: boolean[]; pairs: [number, number][] } {
+  const same = (i: number, j: number) => wordsMatch(tRaw[j] ?? '', pRaw[i] ?? '', t[j], p[i]);
   const n = p.length;
   const m = t.length;
   const okP = new Array<boolean>(n).fill(false);
@@ -214,14 +244,14 @@ function fuzzyWordLcs(
   const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      const hit = p[i] === t[j] || editClose(p[i], t[j]);
+      const hit = same(i, j);
       dp[i][j] = hit ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
   }
   let i = 0;
   let j = 0;
   while (i < n && j < m) {
-    if (p[i] === t[j] || editClose(p[i], t[j])) {
+    if (same(i, j)) {
       okP[i] = true;
       okT[j] = true;
       pairs.push([j, i]);
@@ -330,8 +360,29 @@ function startsWithBasmala(t: string[]): boolean {
  * الآية دونها — فالبسملة ليست من الآية عند الجمهور، ولا يُعاب تركُها هنا
  * (وتظهر كلماتُها في التوقيت «لم تُسمع» على كل حال).
  */
+/**
+ * كلماتُ نصٍّ بصورتيها: الخامّة بالرسم (لقواعد المطابقة) والموحَّدة (للتقارب).
+ * وتُزال الفواصلُ غير المرئية أولًا، فنسخةُ المصحف هنا تقسم بها الكلمة الواحدة.
+ */
+function splitWords(text: string): { raw: string[]; norm: string[] } {
+  const raw: string[] = [];
+  const norm: string[] = [];
+  for (const w of String(text ?? '')
+    .replace(/[\u200A\u200C\u2060\uFEFF]/g, '')
+    .split(/\s+/)) {
+    if (!w) continue;
+    const n = normalizeForMatch(w);
+    if (!n) continue;
+    raw.push(w);
+    norm.push(n);
+  }
+  return { raw, norm };
+}
+
 export function scoreTranscriptMatch(pred: string, target: string): TranscriptScore {
-  const t = matchTokens(target);
+  const tSplit = splitWords(target);
+  const t = tSplit.norm;
+  const tRaw = tSplit.raw;
   const arabic = arabicOnly(pred);
   const emptyResult = (empty: boolean): TranscriptScore => ({
     match: 0,
@@ -346,13 +397,23 @@ export function scoreTranscriptMatch(pred: string, target: string): TranscriptSc
   });
   if (!t.length) return emptyResult(true);
   if (!arabic) return emptyResult(true);
-  const pAll = collapseLetterNames(matchTokens(arabic));
+  /**
+   * تهيئةُ المسموع قبل المطابقة (منقولةٌ من «Contemplating»):
+   *   • الفواتح تُهجَّى أو تُمدّ: «الف لام ميم» و«الاااام» كلاهما ﴿الٓمٓ﴾؛
+   *   • المدُّ يجعل المحرّك يكتب الكلمة مرتين: «الباس الباساء»؛
+   *   • الواو والفاء تنفصلان عمّا بعدهما.
+   */
+  const prepared = collapseSpelledLetters(mergeMaddSplits(mergeDetachedConjunctions(arabic)), tRaw);
+  const pSplit = splitWords(prepared);
+  const pAll = pSplit.norm;
+  const pAllRaw = pSplit.raw;
   if (!pAll.length) return emptyResult(true);
 
   // بسملةٌ في أول المسموع وليست من الآية (أول السورة): تُخرج من الحساب
   const targetIsBasmala = t.length === BASMALA.length && BASMALA.every((w, k) => t[k] === w);
   const prefixLen = startsWithBasmala(t) || targetIsBasmala ? 0 : predStartsWithBasmala(pAll);
   const p = pAll.slice(prefixLen);
+  const pRaw = pAllRaw.slice(prefixLen);
   if (!p.length) {
     const r = emptyResult(false);
     r.predWords = pAll.map((w) => ({ word: w, ok: true, prefix: true }));
@@ -361,8 +422,8 @@ export function scoreTranscriptMatch(pred: string, target: string): TranscriptSc
   }
 
   /** المطابقة على قائمة كلماتٍ للآية (كاملةً أو بلا بسملة) */
-  const evaluate = (tt: string[]) => {
-    const r = fuzzyWordLcs(p, tt);
+  const evaluate = (tt: string[], ttRaw: string[]) => {
+    const r = fuzzyWordLcs(p, tt, pRaw, ttRaw);
     let hits = r.hits;
     let units = p.length; // وحدات المسموع (الكلمة الملتصقة تُعدّ بعدد ما فيها)
     // الكلمات الملتصقة: ما لم يُطابَق ككلمةٍ واحدة قد يكون كلماتٍ متتالية
@@ -382,12 +443,12 @@ export function scoreTranscriptMatch(pred: string, target: string): TranscriptSc
     return { hits, okP: r.okP, okT: r.okT, pairs: r.pairs, recall: hits / tt.length, precision: hits / units, tt };
   };
 
-  let best = evaluate(t);
+  let best = evaluate(t, tRaw);
   let optionalBasmala = false;
 
   // البسملة اختيارية في أول السورة (إن بقيت في نصّ الآية من المصدر)
   if (startsWithBasmala(t) && !BASMALA.every((_, k) => best.okT[k])) {
-    const r = evaluate(t.slice(BASMALA.length));
+    const r = evaluate(t.slice(BASMALA.length), tRaw.slice(BASMALA.length));
     if (f1(r.recall, r.precision) > f1(best.recall, best.precision)) {
       best = {
         ...r,

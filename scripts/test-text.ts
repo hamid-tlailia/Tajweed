@@ -10,6 +10,7 @@ import { runAlignment } from '../src/lib/alignment';
 import { buildCoach } from '../src/lib/coach';
 import { buildCorpus, classifyUtterance, utteranceTokens } from '../src/lib/corpus';
 import { collapseLetterNames, normalizeForMatch, scoreTranscriptMatch, textCheckOf, TEXT_GATE_OK } from '../src/lib/match';
+import { collapseSpelledLetters } from '../src/lib/rasm';
 import { textGateMessage } from '../src/lib/coach';
 import { buildTarget, targetTextOf, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords, normalizeArabic } from '../src/lib/tajweed';
@@ -36,6 +37,7 @@ const ayahText = (s: number, a: number): string => targetTextOf(buildTarget(sura
 
 const gate = (pred: string, s: number, a: number) => scoreTranscriptMatch(pred, ayahText(s, a));
 const pct = (x: number) => `${Math.round(100 * x)}٪`;
+const ayahWords = (s: number, a: number): string[] => buildTarget(surah(s), 'ayah', a).words.map((w) => w.word);
 
 console.log('════════ 1) التوحيد الإملائي: الرسم العثماني يلتقي برسم السماع ════════');
 {
@@ -283,6 +285,25 @@ async function pipeline() {
       textGateMessage({ textCheck: 'unverified', textUnavailable: true }, 0, 1) ?? '',
     ),
   );
+
+  // مطابقة الرسم (منقولة من «Contemplating»): الحالتان اللتان شكا منهما المستخدم
+  console.log('\n— مطابقة الرسم بما يسمعه المحرّك —');
+  {
+    const alm = ayahWords(2, 1).slice(-1);
+    for (const said of ['الف لام ميم', 'ألف لام ميم', 'الفلامميم', 'الاااام', 'الاام', 'الم'])
+      check(`«${said}» تُقبل ﴿الٓمٓ﴾`, collapseSpelledLetters(said, alm) === alm[0], collapseSpelledLetters(said, alm));
+    // وكلماتٌ عاديّة تُشبهها حرفًا لا تُقبل — «اليوم» كانت تُقبل حين كان كلُّ مدٍّ يُتجاوَز
+    for (const w of ['اليوم', 'الذين', 'العالمين', 'الاسلام'])
+      check(`«${w}» لا تُقبل فاتحةً`, collapseSpelledLetters(w, alm) === w);
+
+    // ﴿ذَٰلِكَ ٱلۡكِتَٰبُ…﴾ كما سمعها هاتف المستخدم: كان يُطابَق ثلثُها
+    const heard = 'دانك الكتاب لا رايب فيه دلن المتقين';
+    const sc = scoreTranscriptMatch(heard, ayahText(2, 2));
+    const hit = sc.targetHit.filter(Boolean).length;
+    check('تحريفُ السماع في ﴿ذَٰلِكَ ٱلۡكِتَٰبُ﴾: تُطابَق أكثرُ كلماتها', hit >= 5, `${hit} من ${sc.targetHit.length} · ${pct(sc.match)}`);
+    // ومع ذلك لا تُجاز: كلمتان مبدَّلتان
+    check('…ولا تُجاز مع ذلك', textCheckOf(sc) !== 'ok', textCheckOf(sc));
+  }
 
   // التحقّق بالاحتمال: الأرقام مقيسةٌ من تلاوة الحصري بنموذج whisper-base
   // (هدف ← أعلى دخيل): ١:١ ‎−1.03←−2.07 · ١:٢ ‎−1.68←−4.24 · ١:٣ ‎−1.03←−3.21 ·
