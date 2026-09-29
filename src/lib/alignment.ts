@@ -5,6 +5,7 @@
 //   2. whisper-energy — Whisper transcription (similarity) + energy-peak forced alignment
 //   3. offline-dtw    — pure in-browser energy/DTW-style forced alignment (no AI, always works)
 
+import { alignWordsCtc } from './aligner';
 import { energyEnvelope, speechPresence } from './audio';
 import { buildCoach } from './coach';
 import { ayahLabel, classifyUtterance, loadCorpus, utteranceTokens } from './corpus';
@@ -59,6 +60,11 @@ export interface AlignOpts {
    * مركزُ عدلة السرعة — فكل تحليلٍ يُقاس إلى قارئٍ معتمد لا إلى نفسه.
    */
   reference?: { id: string; name: string; pace: number | null };
+  /**
+   * التوقيت الدقيق: محاذاةٌ قسرية بنموذج CTC بدل قياس الطاقة (انظر aligner.ts).
+   * اختياريٌّ لأن نموذجه يُنزَّل بنحو ٢٤٠ م.ب، ويُتجاهَل إن تعذّر.
+   */
+  precise?: boolean;
   /** نص مساعد التقطته واجهة Speech-to-Text الأصلية في المتصفح بالتوازي.
    * نختار بينه وبين Whisper بحسب الأعلى مطابقةً، ولا نثق به لمجرد وجوده. */
   browserTranscript?: string;
@@ -269,7 +275,38 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
   };
 
   // precise start/end via per-word voiced-span VAD around each midpoint
-  const spans = spansFrom(perWord);
+  let spans = spansFrom(perWord);
+  /** نجحت المحاذاة القسرية بـCTC فحدودُ الكلمات من الصوت لا من نموذج الأزمنة */
+  let preciseTiming = false;
+
+  /**
+   * التوقيت الدقيق: حدودُ الكلمات من محاذاةٍ قسرية على حروف الآية المعلومة.
+   *
+   * قياسُ الطاقة يوزّع الصوت على الكلمات **بنسبة أزمنتها المتوقَّعة** — فالنموذج
+   * يقيس نفسه بنفسه. وأمّا هذه فتُحاذي حروفَ الآية على الصوت، فتخرج الحدود منه.
+   * المقيس على تسع آياتٍ بمرجع Quran.com: متوسّط خطأ المدّة ٥٨٠ م.ث بالطاقة
+   * و٤١١ م.ث بها. وإن أخفقت لأي سبب بقي قياسُ الصوت كما هو.
+   */
+  if (opts.precise && !input.demo) {
+    try {
+      hooks.stage('محاذاةٌ دقيقة لحروف الآية…');
+      const ctc = await alignWordsCtc(samples, words.map((w) => w.word), durationMs);
+      if (ctc && ctc.spans.length === words.length) {
+        // الكلمةُ التي لم يُنطق منها حرف: حدٌّ صفريّ عند نهاية ما قبلها («لم تُسمع»)
+        let cursor = 0;
+        spans = ctc.spans.map((sp: { startMs: number; endMs: number } | null) => {
+          if (!sp) return { startMs: cursor, endMs: cursor };
+          const startMs = Math.max(0, Math.min(durationMs, sp.startMs));
+          const endMs = Math.max(startMs, Math.min(durationMs, sp.endMs));
+          cursor = endMs;
+          return { startMs, endMs };
+        });
+        preciseTiming = true;
+      }
+    } catch (e) {
+      console.warn('[TAHQIQQ] precise timing unavailable → energy spans:', e);
+    }
+  }
   const measuredMs = spans.map((sp) => Math.max(0, sp.endMs - sp.startMs));
   // صوتٌ مسموعٌ خارج كلمات الآية كلها (كلامٌ قبلها أو بعدها، أو آيةٌ أخرى):
   // لا يُعرف لفظُه بلا سماعٍ ذكي، لكن يُنبَّه إليه في النتيجة اللحظية بدل السكوت عنه
@@ -449,6 +486,7 @@ export async function runAlignment(input: AlignInput, opts: AlignOpts, hooks: Al
     matchSource,
     predWords,
     textCheck,
+    preciseTiming,
     textVerifiedByLikelihood: likelihoodVerified,
     textUnavailable,
     noSpeech: noSpeechGate,

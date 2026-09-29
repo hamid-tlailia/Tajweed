@@ -30,6 +30,8 @@ export default function ModelPanel() {
   const tempo = useTahqiq((s) => s.tempo);
   const setTempo = useTahqiq((s) => s.setTempo);
   const instantEval = useTahqiq((s) => s.instantEval);
+  const preciseTiming = useTahqiq((s) => s.preciseTiming);
+  const setPreciseTiming = useTahqiq((s) => s.setPreciseTiming);
   const setInstantEval = useTahqiq((s) => s.setInstantEval);
   const modelStatus = useTahqiq((s) => s.modelStatus);
   const modelProgress = useTahqiq((s) => s.modelProgress);
@@ -171,6 +173,43 @@ export default function ModelPanel() {
             مُطفأ: تنتظر النتيجةُ التحليلَ الكامل دائمًا (سماعًا ذكيًّا إن كان مُجهَّزًا) — أدقّ في تمييز الألفاظ وأبطأ.
           </p>
         ) : null}
+      </div>
+
+      {/* التوقيت الدقيق: محاذاةٌ قسرية بحروف الآية بدل قياس الطاقة */}
+      <div className="mt-3 rounded-xl border border-line bg-ink-850/60 p-3.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold text-slate-200">التوقيت الدقيق لحدود الكلمات</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+              الأصل أن تُقاس حدودُ الكلمات من <b className="text-slate-300">مستوى الصوت</b>، فيُوزَّع المسموع على
+              الكلمات بنسبة أزمنتها المتوقَّعة — وفيه دورٌ: النموذج يقيس نفسه بنفسه. وبهذا الوضع تُحاذى{' '}
+              <b className="text-slate-300">حروفُ الآية نفسها</b> على صوتك، فتخرج الحدود من الصوت. وقياسُنا على تسع
+              آياتٍ بمرجعٍ خارجي: متوسّط خطأ مدّة الكلمة <b className="text-slate-300">٥٨٠ م.ث</b> بالطاقة و
+              <b className="text-mint-300"> ٤١١ م.ث</b> به.
+            </p>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-warn-200/90">
+              يحتاج نموذجًا إضافيًّا يُنزَّل مرةً واحدة (نحو ٢٤٠ م.ب) ثم يُخزَّن في المتصفح — فلا تُشغّله على اتصالٍ
+              محدود. وإن تعذّر عاد القياسُ إلى الصوت تلقائيًّا.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={preciseTiming}
+            aria-label="التوقيت الدقيق"
+            onClick={() => setPreciseTiming(!preciseTiming)}
+            className={`relative h-6 w-11 shrink-0 rounded-full border transition ${
+              preciseTiming ? 'border-gold-500/70 bg-gold-500/30' : 'border-line bg-ink-700'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 rounded-full transition-all ${
+                preciseTiming ? 'start-[22px] bg-gold-300' : 'start-0.5 bg-slate-500'
+              }`}
+              style={{ height: 18, width: 18 }}
+            />
+          </button>
+        </div>
       </div>
 
       {/* تجهيز السماع الذكي */}

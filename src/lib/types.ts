@@ -207,6 +207,12 @@ export interface WordTajweed {
 
 export type WordStatus = 'excellent' | 'ok' | 'short' | 'long' | 'silent';
 
+/** حدّا كلمةٍ في التسجيل (م.ث) */
+export interface WordSpan {
+  startMs: number;
+  endMs: number;
+}
+
 export interface WordAlignment {
   index: number;
   ayah: number;
@@ -282,6 +288,8 @@ export interface AlignmentResult {
    * حين يهذي التفريغُ على التلاوة المجوَّدة، فيُردّ نصٌّ صحيح ثم يُقبل بالاحتمال.
    */
   textVerifiedByLikelihood?: boolean;
+  /** حدودُ الكلمات من محاذاةٍ قسرية بـCTC لا من قياس الطاقة (التوقيت الدقيق) */
+  preciseTiming?: boolean;
   /** لم يُسمع في التسجيل كلامٌ أصلًا (صمتٌ أو ضجيجُ محيط) — انظر audio.speechPresence */
   noSpeech?: boolean;
   /** زمن الكلام المقاس في التسجيل (م.ث) — ٠ إن كان صمتًا أو ضجيجًا */
