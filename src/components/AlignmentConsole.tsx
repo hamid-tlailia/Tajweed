@@ -493,6 +493,27 @@ export default function AlignmentConsole() {
         />
       </div>
 
+      {/* التوقيت الدقيق: يُقال للقارئ من أين جاءت حدودُ كلماته */}
+      {result.preciseTiming ? (
+        <div className="mt-3 rounded-xl border border-mint-500/40 bg-mint-500/10 p-3.5">
+          <h4 className="text-[11px] font-semibold text-mint-200">توقيتٌ دقيق: حدودُ الكلمات من صوتك</h4>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300">
+            حُوذيت حروفُ الآية على تسجيلك حرفًا حرفًا، فحدودُ كل كلمة مأخوذةٌ من الصوت نفسه لا من نموذج الأزمنة.
+          </p>
+        </div>
+      ) : null}
+
+      {/* تبيّن النصّ بالاحتمال لا بالتفريغ — يُقال للقارئ صراحةً */}
+      {result.textVerifiedByLikelihood ? (
+        <div className="mt-3 rounded-xl border border-mint-500/40 bg-mint-500/10 p-3.5">
+          <h4 className="text-[11px] font-semibold text-mint-200">تحقّق النصّ بمطابقة صوتك للآية</h4>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300">
+            لم يتبيّن نصُّك بتفريغٍ حرّ (والتفريغُ يضلّ في التلاوة المجوَّدة)، فقِيس بدله <b>احتمالُ نصّ الآية
+            على صوتك</b> ووُزن بآياتٍ أخرى — فكانت هذه الآية أوفقَها لصوتك.
+          </p>
+        </div>
+      ) : null}
+
       {/* تشخيصُ إخفاق السماع: ماذا أخرج النموذج فعلًا — ليُعرف موضعُ الخلل */}
       {textUnavailable ? (
         <div className="mt-3 rounded-xl border border-line bg-ink-850/50 p-3.5">

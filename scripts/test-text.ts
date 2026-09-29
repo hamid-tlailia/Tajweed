@@ -14,6 +14,7 @@ import { textGateMessage } from '../src/lib/coach';
 import { buildTarget, targetTextOf, stripSurahBasmala } from '../src/lib/quran';
 import { analyzeWords, normalizeArabic } from '../src/lib/tajweed';
 import { timingVerdictAllowed } from '../src/lib/types';
+import { decideByLikelihood, VERIFY_FLOOR, VERIFY_MARGIN } from '../src/lib/whisper';
 import type { SurahData, WordAlignment } from '../src/lib/types';
 
 let fails = 0;
@@ -282,6 +283,29 @@ async function pipeline() {
       textGateMessage({ textCheck: 'unverified', textUnavailable: true }, 0, 1) ?? '',
     ),
   );
+
+  // التحقّق بالاحتمال: الأرقام مقيسةٌ من تلاوة الحصري بنموذج whisper-base
+  // (هدف ← أعلى دخيل): ١:١ ‎−1.03←−2.07 · ١:٢ ‎−1.68←−4.24 · ١:٣ ‎−1.03←−3.21 ·
+  // ١١٢:١ ‎−3.58←−4.06 · ١١٤:١ ‎−2.92←−4.33 · ونصٌّ مهذًى على صوت البسملة ‎−5.73
+  {
+    const measured: [string, number, number[]][] = [
+      ['١:١ البسملة', -1.03, [-2.07, -3.4]],
+      ['١:٢', -1.68, [-4.24, -4.9]],
+      ['١:٣', -1.03, [-3.21, -3.9]],
+      ['١١٢:١ (أقصرها)', -3.58, [-4.06, -4.4]],
+      ['١١٤:١', -2.92, [-4.33, -5.1]],
+    ];
+    const allOk = measured.every(([, t, d]) => decideByLikelihood(t, d).ok);
+    check(
+      'التلاوة الصحيحة تجتاز التحقّق بالاحتمال في القياسات الخمس',
+      allOk,
+      measured.map(([n, t, d]) => `${n}:${decideByLikelihood(t, d).margin.toFixed(2)}`).join(' · '),
+    );
+    check('النصّ المهذيّ لا يجتاز', !decideByLikelihood(-5.73, [-2.07, -3.4]).ok);
+    check('احتمالٌ دون الحدّ المطلق لا يجتاز ولو علا الدخلاء', !decideByLikelihood(-4.5, [-6, -7]).ok, `${VERIFY_FLOOR}`);
+    check('هامشٌ دون الحدّ لا يجتاز', !decideByLikelihood(-1.2, [-1.1]).ok && VERIFY_MARGIN === 0.3);
+    check('بلا نصوصٍ دخيلة لا يُحكم', !decideByLikelihood(-1, []).ok);
+  }
 
   // أخفق السماع: تُعرض الأزمنة كما قِيست (بلا تقييدٍ للدرجة) ولا تُجاز التلاوة،
   // ولا تُوسم كلماتُها «لم يُسمع لفظُها» — فالقارئ لعلّه قرأها والسماعُ هو الذي أخفق.

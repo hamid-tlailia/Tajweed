@@ -59,6 +59,7 @@ type PersistedSettings = Partial<
     | 'theme'
     | 'useReciterGate'
     | 'instantEval'
+    | 'preciseTiming'
     | 'referenceChoice'
     | 'recitationStyle'
   >
@@ -83,6 +84,8 @@ function saveSettings(s: {
   theme: ThemeMode;
   useReciterGate: boolean;
   instantEval: boolean;
+  /** التوقيت الدقيق: محاذاةٌ قسرية بـCTC (نموذجٌ إضافي ~٢٤٠ م.ب) */
+  preciseTiming: boolean;
   referenceChoice: string;
   recitationStyle: RecitationStyle;
 }) {
@@ -194,9 +197,12 @@ interface TahqiqStore {
    * ذكي)، ثم يُستأنف التحليل الأدقّ في الخلفية ويُستبدل بالنتيجة إن اختلف.
    */
   instantEval: boolean;
+  /** التوقيت الدقيق: محاذاةٌ قسرية بـCTC بدل قياس الطاقة (نموذجٌ إضافي) */
+  preciseTiming: boolean;
   /** التحليل الأدقّ جارٍ في الخلفية بعد نتيجةٍ لحظية */
   refining: boolean;
   setInstantEval: (b: boolean) => void;
+  setPreciseTiming: (b: boolean) => void;
   setRefining: (b: boolean) => void;
 
   /** التحكيم بالقارئ المعتمد */
@@ -259,6 +265,7 @@ function persistSettings(get: () => TahqiqStore) {
     theme: s.theme,
     useReciterGate: s.useReciterGate,
     instantEval: s.instantEval,
+    preciseTiming: s.preciseTiming,
     referenceChoice: s.referenceChoice,
     recitationStyle: s.recitationStyle,
   });
@@ -304,6 +311,8 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
   activeWord: -1,
   alertOn: true,
   instantEval: true,
+  // اختياريّ: نموذجُه كبير، فلا يُجلب إلا لمن طلبه
+  preciseTiming: false,
   refining: false,
 
   refEval: { status: 'idle', key: '', stage: '', error: null },
@@ -320,6 +329,10 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
 
   setInstantEval: (instantEval) => {
     set({ instantEval });
+    persistSettings(get);
+  },
+  setPreciseTiming: (preciseTiming) => {
+    set({ preciseTiming });
     persistSettings(get);
   },
   setRefining: (refining) => set({ refining }),
@@ -504,6 +517,7 @@ export const useTahqiq = create<TahqiqStore>()((set, get) => ({
       ...(saved.theme ? { theme: saved.theme } : {}),
       ...(typeof saved.useReciterGate === 'boolean' ? { useReciterGate: saved.useReciterGate } : {}),
       ...(typeof saved.instantEval === 'boolean' ? { instantEval: saved.instantEval } : {}),
+      ...(typeof saved.preciseTiming === 'boolean' ? { preciseTiming: saved.preciseTiming } : {}),
       ...(typeof saved.referenceChoice === 'string' ? { referenceChoice: saved.referenceChoice } : {}),
       ...(saved.recitationStyle === 'murattal' || saved.recitationStyle === 'mujawwad'
         ? { recitationStyle: saved.recitationStyle }

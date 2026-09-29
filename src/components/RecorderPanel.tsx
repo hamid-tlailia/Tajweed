@@ -108,6 +108,7 @@ export default function RecorderPanel() {
   const alertOn = useTahqiq((s) => s.alertOn);
   const setAlertOn = useTahqiq((s) => s.setAlertOn);
   const instantEval = useTahqiq((s) => s.instantEval);
+  const preciseTiming = useTahqiq((s) => s.preciseTiming);
   const referenceOf = useTahqiq((s) => s.referenceOf);
   /** الإيقاف جارٍ (مهلة ختم الصوت) — يمنع بدء تسجيلٍ جديد قبل أن يُختم السابق */
   const stoppingRef = useRef(false);
@@ -348,7 +349,16 @@ export default function RecorderPanel() {
     try {
       const res = await engineAlign(
         input,
-        { tau, modelSize, target, riwayah, tempo, browserTranscript: input.browserTranscript, reference: { id: reciter.id, name: reciter.name, pace: reciter.pace } },
+        {
+          tau,
+          modelSize,
+          target,
+          riwayah,
+          tempo,
+          browserTranscript: input.browserTranscript,
+          precise: preciseTiming,
+          reference: { id: reciter.id, name: reciter.name, pace: reciter.pace },
+        },
         {
           stage: (s) => setProcessing(true, s),
           model: modelHook,
